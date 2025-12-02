@@ -1,0 +1,21 @@
+services:
+  api:
+    build:
+      context: ./apps/api
+    environment:
+      - PORT=5000
+    ports:
+      - "5000:5000"
+    volumes:
+      - api_data:/app/data
+      - api_uploads:/app/uploads
+  web:
+    build:
+      context: ./apps/web
+    depends_on:
+      - api
+    ports:
+      - "8080:80"
+volumes:
+  api_data:
+  api_uploads:

@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="bs">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Zakoni FBiH 2004 - Tabela sa URL-ovima</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 20px;
+            background-color: #f8f9fa;
+            color: #333;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #2c3e50;
+            text-align: center;
+            margin-bottom: 10px;
+            font-size: 2.2em;
+        }
+        .subtitle {
+            text-align: center;
+            color: #7f8c8d;
+            margin-bottom: 30px;
+            font-size: 1.1em;
+        }
+        .controls {
+            margin-bottom: 25px;
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+            border: 1px solid #e9ecef;
+        }
+        input[type="text"] {
+            padding: 12px 15px;
+            border: 2px solid #e9ecef;
+            border-radius: 6px;
+            font-size: 16px;
+            flex: 1;
+            max-width: 400px;
+            transition: border-color 0.3s;
+        }
+        input[type="text"]:focus {
+            outline: none;
+            border-color: #3498db;
+            box-shadow: 0 0 0 3px rgba(52, 152, 219, 0.1);
+        }
+        button {
+            padding: 12px 20px;
+            background-color: #3498db;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 500;
+            transition: background-color 0.3s, transform 0.1s;
+        }
+        button:hover {
+            background-color: #2980b9;
+        }
+        button:active {
+            transform: translateY(1px);
+        }
+        .refresh-btn {
+            background-color: #27ae60;
+        }
+        .refresh-btn:hover {
+            background-color: #229954;
+        }
+        .export-btn {
+            background-color: #e67e22;
+        }
+        .export-btn:hover {
+            background-color: #d35400;
+        }
+        .stats {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 25px;
+            text-align: center;
+            font-size: 1.1em;
+            font-weight: 500;
+        }
+        .loading {
+            text-align: center;
+            padding: 60px;
+            color: #7f8c8d;
+            font-size: 1.2em;
+        }
+        .error {
+            background-color: #e74c3c;
+            color: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+            font-weight: 500;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 25px;
+            background: white;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+        }
+        th {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 18px 15px;
+            text-align: left;
+            font-weight: 600;
+            font-size: 1.05em;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+        td {
+            padding: 15px;
+            text-align: left;
+            border-bottom: 1px solid #e9ecef;
+            vertical-align: top;
+        }
+        tr:hover {
+            background-color: #f8f9fa;
+            transition: background-color 0.2s;
+        }
+        tr:last-child td {
+            border-bottom: none;
+        }
+        .law-name {
+            font-weight: 500;
+            color: #2c3e50;
+            max-width: 400px;
+            word-wrap: break-word;
+        }
+        .gazette-number {
+            font-family: 'Courier New', monospace;
+            background: #e9ecef;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.9em;
+            font-weight: 500;
+        }
+        .url-cell a {
+            color: #3498db;
+            text-decoration: none;
+            font-weight: 500;
+            padding: 8px 12px;
+            background: #ecf0f1;
+            border-radius: 4px;
+            display: inline-block;
+            transition: all 0.3s;
+            border: 1px solid #bdc3c7;
+        }
+        .url-cell a:hover {
+            background: #3498db;
+            color: white;
+            border-color: #2980b9;
+            text-decoration: none;
+            transform: translateY(-1px);
+            box-shadow: 0 2px 8px rgba(52, 152, 219, 0.3);
+        }
+        .no-url {
+            color: #7f8c8d;
+            font-style: italic;
+        }
+        .hidden {
+            display: none;
+        }
+        .source-info {
+            font-size: 0.85em;
+            color: #7f8c8d;
+            margin-top: 5px;
+        }
+        .download-section {
+            background: #ecf0f1;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 25px;
+            border-left: 4px solid #3498db;
+        }
+        .download-section h3 {
+            margin-top: 0;
+            color: #2c3e50;
+        }
+        .bulk-download {
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+            margin-top: 15px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Zakoni FBiH 2004 - Tabela sa URL-ovima</h1>
+        <p class="subtitle">Pregled zakona objavljenih u Službenim novinama Federacije Bosne i Hercegovine 2004. godine</p>
+        
+        <div class="download-section">
+            <h3>📥 Opcije preuzimanja</h3>
+            <p>Kliknite na dugme "Preuzmi" pored svakog zakona da biste skinuli pojedinačni fajl, ili koristite opcije masovnog preuzimanja:</p>
+            <div class="bulk-download">
+                <button class="export-btn" onclick="exportToCSV()">📄 Eksportuj u CSV</button>
+                <button class="export-btn" onclick="exportToJSON()">📋 Eksportuj u JSON</button>
+                <button class="refresh-btn" onclick="generateDownloadScript()">⚡ Generiši skriptu za skidanje</button>
+            </div>
+        </div>
+
+        <div class="controls">
+            <input type="text" id="searchInput" placeholder="🔍 Pretraži zakone po nazivu, broju službenih novina...">
+            <button onclick="searchLaws()">Pretraži</button>
+            <button onclick="clearSearch()">Očisti</button>
+            <button class="refresh-btn" onclick="loadData()">🔄 Osvježi podatke</button>
+        </div>
+
+        <div id="stats" class="stats hidden"></div>
+        <div id="loading" class="loading">⏳ Učitavanje podataka...</div>
+        <div id="error" class="error hidden"></div>
+        
+        <table id="lawsTable" class="hidden">
+            <thead>
+                <tr>
+                    <th>Naziv zakona</th>
+                    <th>Godina</th>
+                    <th>Broj službenih novina</th>
+                    <th>Datum</th>
+                    <th>Preuzimanje</th>
+                </tr>
+            </thead>
+            <tbody id="lawsTableBody">
+            </tbody>
+        </table>
+    </div>
+
+    <script>
+        let allLaws = [];
+        let filteredLaws = [];
+
+        async function loadData() {
+            const loadingEl = document.getElementById('loading');
+            const errorEl = document.getElementById('error');
+            const tableEl = document.getElementById('lawsTable');
+            const statsEl = document.getElementById('stats');
+            
+            loadingEl.classList.remove('hidden');
+            errorEl.classList.add('hidden');
+            tableEl.classList.add('hidden');
+            statsEl.classList.add('hidden');
+
+            try {
+                // Fetch real data from the API
+                const response = await fetch('/api/scrape-fbih-2004');
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                
+                if (!data.laws || data.laws.length === 0) {
+                    throw new Error('Nema pronađenih zakona na web stranici');
+                }
+                
+                // Transform the data to match our table format
+                allLaws = data.laws.map(law => ({
+                    name: law.name,
+                    year: law.year,
+                    officialGazette: law.gazette,
+                    date: law.date,
+                    url: law.url,
+                    downloadUrl: null // Will be generated when files are available
+                }));
+
+                filteredLaws = [...allLaws];
+                displayLaws(filteredLaws);
+                
+                // Show stats
+                const source = 'sa FBIH web stranice';
+                statsEl.innerHTML = `Pronađeno ${allLaws.length} zakona za 2004. godinu ${source}`;
+                statsEl.classList.remove('hidden');
+                
+            } catch (error) {
+                errorEl.textContent = `Greška pri učitavanju podataka: ${error.message}`;
+                errorEl.classList.remove('hidden');
+            } finally {
+                loadingEl.classList.add('hidden');
+            }
+        }
+
+        function displayLaws(laws) {
+            const tbody = document.getElementById('lawsTableBody');
+            const table = document.getElementById('lawsTable');
+            
+            tbody.innerHTML = '';
+            
+            if (laws.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; padding: 40px; font-size: 1.2em; color: #7f8c8d;">Nema pronađenih zakona</td></tr>';
+            } else {
+                laws.forEach(law => {
+                    const row = document.createElement('tr');
+                    row.innerHTML = `
+                        <td class="law-name">${law.name}</td>
+                        <td>${law.year}</td>
+                        <td><span class="gazette-number">${law.officialGazette}</span></td>
+                        <td>${law.date || '<span style="color: #7f8c8d;">Nije naveden</span>'}</td>
+                        <td class="url-cell">
+                            ${law.downloadUrl ? 
+                                `<a href="${law.downloadUrl}" download="${law.name}.docx" title="Preuzmi ${law.name}">
+                                    📥 Preuzmi
+                                </a>` : 
+                                `<a href="${law.url}" target="_blank" title="Pogledaj na webu">
+                                    🔗 Pogledaj
+                                </a>`
+                            }
+                        </td>
+                    `;
+                    tbody.appendChild(row);
+                });
+            }
+            
+            table.classList.remove('hidden');
+        }
+
+        function searchLaws() {
+            const searchTerm = document.getElementById('searchInput').value.toLowerCase();
+            
+            if (!searchTerm) {
+                filteredLaws = [...allLaws];
+            } else {
+                filteredLaws = allLaws.filter(law => 
+                    law.name.toLowerCase().includes(searchTerm) ||
+                    law.officialGazette.toLowerCase().includes(searchTerm)
+                );
+            }
+            
+            displayLaws(filteredLaws);
+            
+            // Update stats
+            const statsEl = document.getElementById('stats');
+            statsEl.innerHTML = `Prikazano ${filteredLaws.length} od ${allLaws.length} zakona`;
+        }
+
+        function clearSearch() {
+            document.getElementById('searchInput').value = '';
+            filteredLaws = [...allLaws];
+            displayLaws(filteredLaws);
+            
+            const statsEl = document.getElementById('stats');
+            statsEl.innerHTML = `Pronađeno ${allLaws.length} zakona za 2004. godinu sa FBIH web stranice`;
+        }
+
+        function exportToCSV() {
+            const csvContent = [
+                ['Naziv zakona', 'Godina', 'Broj službenih novina', 'Datum', 'URL'],
+                ...allLaws.map(law => [
+                    `"${law.name}"`,
+                    law.year,
+                    law.officialGazette,
+                    law.date || '',
+                    law.downloadUrl || law.url
+                ])
+            ].map(row => row.join(',')).join('\n');
+            
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = 'fbih_zakoni_2004.csv';
+            link.click();
+        }
+
+        function exportToJSON() {
+            const jsonContent = JSON.stringify(allLaws, null, 2);
+            const blob = new Blob([jsonContent], { type: 'application/json;charset=utf-8;' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = 'fbih_zakoni_2004.json';
+            link.click();
+        }
+
+        function generateDownloadScript() {
+            const script = `#!/bin/bash
+# Skripta za preuzimanje FBIH zakona iz 2004. godine
+# Generisano: ${new Date().toLocaleString()}
+
+echo "Preuzimanje ${allLaws.length} zakona FBiH iz 2004. godine..."
+
+mkdir -p "FBiH_Zakoni_2004"
+cd "FBiH_Zakoni_2004"
+
+${allLaws.map((law, index) => {
+    const filename = law.name.replace(/[^a-zA-Z0-9šđžčćŠĐŽČĆ\s]/g, '').replace(/\s+/g, '_') + '.docx';
+    if (law.downloadUrl) {
+        return `echo "[${index + 1}/${allLaws.length}] Preuzimanje: ${law.name}"
+cp "../${law.downloadUrl}" "${filename}" 2>/dev/null || echo "⚠️  Fajl nije pronađen: ${law.name}"`;
+    } else {
+        return `echo "[${index + 1}/${allLaws.length}] URL nije dostupan: ${law.name}"
+# URL: ${law.url}`;
+    }
+}).join('\n')}
+
+echo "✅ Preuzimanje završeno!"
+echo "📁 Fajlovi su smješteni u folder: FBiH_Zakoni_2004"
+`;
+            
+            const blob = new Blob([script], { type: 'text/plain;charset=utf-8;' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = 'preuzmi_zakone_2004.sh';
+            link.click();
+        }
+
+        // Search on Enter key
+        document.getElementById('searchInput').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                searchLaws();
+            }
+        });
+
+        // Load data on page load
+        document.addEventListener('DOMContentLoaded', loadData);
+    </script>
+</body>
+</html>

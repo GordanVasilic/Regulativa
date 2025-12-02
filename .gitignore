@@ -1,0 +1,14 @@
+node_modules/
+apps/web/node_modules/
+apps/api/node_modules/
+apps/web/dist/
+apps/api/dist/
+apps/api/data/
+apps/api/data.ms/
+apps/api/uploads/
+Dokumenti/
+tools/meili/meilisearch.exe
+apps/api/.env
+**/dumps/
+**/tmp/
+*.log

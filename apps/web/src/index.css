@@ -1,0 +1,79 @@
+@import "tailwindcss";
+
+@theme {
+  /* Modern Palette */
+  --color-primary: #2563eb; /* blue-600 */
+  --color-primary-hover: #1d4ed8; /* blue-700 */
+  
+  --color-bg-body: #f8fafc; /* slate-50 */
+  --color-text-main: #0f172a; /* slate-900 */
+  --color-text-muted: #64748b; /* slate-500 */
+
+  /* Shadows */
+  --shadow-card: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+  --shadow-card-hover: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+}
+
+/* Import Inter Font */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+html {
+  font-family: 'Inter', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  background-color: var(--color-bg-body);
+  color: var(--color-text-main);
+  line-height: 1.6;
+}
+
+/* Modern Card Utility */
+.card {
+  background-color: #fff;
+  border: 1px solid #e2e8f0; /* slate-200 */
+  border-radius: 1rem; /* rounded-2xl */
+  box-shadow: var(--shadow-card);
+  transition: all 0.2s ease-in-out;
+  overflow: hidden;
+}
+
+.card:hover {
+  box-shadow: var(--shadow-card-hover);
+  transform: translateY(-2px);
+}
+
+.card-header {
+  background-color: #fff;
+  border-bottom: 1px solid #f1f5f9; /* slate-100 */
+  padding: 1.25rem 1.5rem;
+}
+
+.card-title {
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: var(--color-text-main);
+  letter-spacing: -0.025em;
+}
+
+.card-body {
+  padding: 1.5rem;
+}
+
+/* PDF Viewer Styles */
+.pdf-hl {
+  background-color: rgba(37, 99, 235, 0.2); /* blue-600 with opacity */
+  border-bottom: 2px solid #2563eb;
+  padding: 0 2px;
+}
+
+.pdf-page {
+  box-shadow: var(--shadow-card);
+  border-radius: 0.5rem;
+}
+
+.pdf-toolbar {
+  background-color: #1e293b; /* slate-800 */
+  border-radius: 0.5rem;
+}

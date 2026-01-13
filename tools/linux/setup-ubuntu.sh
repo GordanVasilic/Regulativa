@@ -55,7 +55,10 @@ sudo mkdir -p /var/lib/meilisearch/snapshots
 sudo chown -R $USER:$USER /var/lib/meilisearch
 
 # 6. Firewall Setup (UFW)
-echo "🛡️ Configuring Firewall..."
+echo "🛡️ Installing and configuring Firewall..."
+if ! command -v ufw &> /dev/null; then
+    sudo apt-get install -y ufw
+fi
 sudo ufw allow 'Nginx Full'
 sudo ufw allow OpenSSH
 # Enable if not already enabled (be careful with SSH!)

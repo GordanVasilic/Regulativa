@@ -9,6 +9,8 @@ import sqlite3 from 'sqlite3'
 import { open } from 'node:fs/promises'
 import { MeiliSearch } from 'meilisearch'
 import mammoth from 'mammoth'
+import { pdfService } from './services/pdf.service'
+import { parseSegments, parseSegmentsFromPdf, normalizeTitle } from './services/law-parsing.service'
 
 const PORT = process.env.PORT ? Number(process.env.PORT) : 5000
 const ROOT = path.resolve(process.cwd())
@@ -35,12 +37,12 @@ function run(db: sqlite3.Database, sql: string, params: any[] = []): Promise<voi
 }
 function all<T = any>(db: sqlite3.Database, sql: string, params: any[] = []): Promise<T[]> {
   return new Promise((resolve, reject) => {
-    db.all(sql, params, (err, rows) => (err ? reject(err) : resolve(rows)))
+    db.all(sql, params, (err, rows) => (err ? reject(err) : resolve(rows as T[])))
   })
 }
 function get<T = any>(db: sqlite3.Database, sql: string, params: any[] = []): Promise<T | undefined> {
   return new Promise((resolve, reject) => {
-    db.get(sql, params, (err, row) => (err ? reject(err) : resolve(row)))
+    db.get(sql, params, (err, row) => (err ? reject(err) : resolve(row as T)))
   })
 }
 
@@ -85,10 +87,15 @@ try {
   // ignore if exists
 }
 try {
-  await run(db, 'ALTER TABLE laws ADD COLUMN last_opened TEXT')
-} catch (e) {
-  // ignore if exists
-}
+    await run(db, 'ALTER TABLE laws ADD COLUMN last_opened TEXT')
+  } catch (e) {
+    // ignore if exists
+  }
+  try {
+    await run(db, 'ALTER TABLE laws ADD COLUMN text_content TEXT')
+  } catch (e) {
+    // ignore if exists
+  }
 
 await run(
   db,
@@ -212,8 +219,12 @@ app.get('/search', async (req, res) => {
 app.get('/laws', async (req, res) => {
   try {
     const limit = Number(req.query.limit || 50)
+    const offset = Number(req.query.offset || 0)
     const sort = String(req.query.sort || 'id_desc')
     const jurisdiction = req.query.jurisdiction ? String(req.query.jurisdiction) : null
+    const format = req.query.format ? String(req.query.format) : null
+    const q = req.query.q ? String(req.query.q).trim() : null
+
     let orderBy = 'id DESC'
     if (sort === 'gazette_desc') {
       // Sort by gazette year (right part) DESC, then gazette number (left part) DESC; nulls last
@@ -225,17 +236,50 @@ app.get('/laws', async (req, res) => {
              ELSE NULL END DESC,
         id DESC
       `
+    } else if (sort === 'date_desc') {
+      // Sort by gazette_date DESC, nulls last
+      orderBy = `
+        (gazette_date IS NULL) ASC,
+        gazette_date DESC,
+        id DESC
+      `
     }
-    const where = jurisdiction ? 'WHERE jurisdiction = ?' : ''
+    
+    const whereParts: string[] = []
     const params: any[] = []
-    if (jurisdiction) params.push(jurisdiction)
-    params.push(limit)
+
+    if (jurisdiction) {
+      whereParts.push('jurisdiction = ?')
+      params.push(jurisdiction)
+    }
+
+    if (q) {
+      // Basic search on title or gazette_key
+      whereParts.push('(title LIKE ? OR gazette_key LIKE ?)')
+      params.push(`%${q}%`, `%${q}%`)
+    }
+
+    const where = whereParts.length > 0 ? `WHERE ${whereParts.join(' AND ')}` : ''
+    
+    // Total count for pagination
+    let total = 0
+    if (format === 'paged') {
+      const countRes = await get(db, `SELECT COUNT(*) as cnt FROM laws ${where}`, params)
+      total = countRes?.cnt || 0
+    }
+
+    params.push(limit, offset)
     const rows = await all(
       db,
-      `SELECT id, jurisdiction, title, gazette_key, gazette_date, path_pdf, created_at, views_count, last_opened FROM laws ${where} ORDER BY ${orderBy} LIMIT ?`,
+      `SELECT id, jurisdiction, title, gazette_key, gazette_date, path_pdf, created_at, views_count, last_opened FROM laws ${where} ORDER BY ${orderBy} LIMIT ? OFFSET ?`,
       params
     )
-    res.json(rows)
+
+    if (format === 'paged') {
+      res.json({ data: rows, total, limit, offset })
+    } else {
+      res.json(rows)
+    }
   } catch (e) {
     res.status(500).json({ error: String(e) })
   }
@@ -348,6 +392,32 @@ app.get('/laws/search', async (req, res) => {
       params
     )
     res.json({ hits: rows, total: Number(totalRows?.cnt || rows.length), limit, offset })
+  } catch (e) {
+    res.status(500).json({ error: String(e) })
+  }
+})
+
+app.get('/api/laws/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id)
+    const law = await get(db, 'SELECT * FROM laws WHERE id = ?', [id])
+    if (!law) return res.status(404).json({ error: 'Not found' })
+    
+    // If text_content is missing, reconstruct from segments
+    if (!law.text_content) {
+        const segments = await all(db, 'SELECT label, text FROM segments WHERE law_id = ? ORDER BY id ASC', [id])
+        if (segments.length > 0) {
+            // Reconstruct text: join segment texts.
+            // Note: Parser stores full text in segment.text, including label if regex matched.
+            // But let's check if we need to add label explicitly?
+            // Usually segment.text is the full article content.
+            // If label is "Član 1", text is "Član 1\nTekst...".
+            // So joining by newlines is enough.
+            law.text_content = segments.map(s => s.text).join('\n\n')
+        }
+    }
+    
+    res.json(law)
   } catch (e) {
     res.status(500).json({ error: String(e) })
   }
@@ -617,6 +687,251 @@ app.post('/upload', upload.single('file'), async (req, res) => {
     }
     res.json({ ok: true, id: doc?.id })
   } catch (e) {
+    res.status(500).json({ error: String(e) })
+  }
+})
+
+
+// Admin: Add new law manually
+app.post('/api/admin/laws', async (req, res) => {
+  try {
+    const { title, jurisdiction, date, gazette_key, text } = req.body
+    if (!title || !jurisdiction || !text) {
+      return res.status(400).json({ error: 'Missing required fields' })
+    }
+
+    // 1. Generate PDF
+    const path_pdf = await pdfService.generatePdf(title, text, jurisdiction, gazette_key)
+
+    // 2. Insert into DB
+    const title_normalized = normalizeTitle(title)
+    await run(
+      db,
+      `INSERT INTO laws (jurisdiction, title, title_normalized, gazette_key, gazette_date, path_pdf, text_content, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+      [jurisdiction, title, title_normalized, gazette_key || null, date || null, path_pdf, text]
+    )
+    
+    const law = await get(db, 'SELECT id, title, jurisdiction, gazette_key, title_normalized FROM laws WHERE path_pdf = ? ORDER BY id DESC LIMIT 1', [path_pdf])
+    if (!law) throw new Error('Failed to retrieve inserted law')
+
+    // 3. Parse Segments (from generated PDF to get correct page hints)
+    const segments = await parseSegmentsFromPdf(path_pdf)
+    
+    // 4. Insert Segments
+    for (const s of segments) {
+      await run(
+        db,
+        'INSERT INTO segments (law_id, segment_type, label, number, text, page_hint) VALUES (?, ?, ?, ?, ?, ?)',
+        [law.id, 'article', s.label, s.number, s.text, s.page_hint]
+      )
+    }
+
+    // 5. Index to MeiliSearch
+    if (meili) {
+      try {
+        // Index Law
+        await meili.index('laws').addDocuments([{
+          id: law.id,
+          title: law.title,
+          jurisdiction: law.jurisdiction,
+          gazette_key: law.gazette_key,
+          title_normalized: law.title_normalized
+        }])
+
+        // Index Segments
+        const insertedSegments = await all(db, 'SELECT id, label, number, text FROM segments WHERE law_id = ?', [law.id])
+        const meiliDocs = insertedSegments.map(s => ({
+          id: s.id,
+          law_id: law.id,
+          label: s.label,
+          number: s.number,
+          text: s.text,
+          law_title: law.title,
+          jurisdiction: law.jurisdiction,
+          gazette_key: law.gazette_key
+        }))
+        await meili.index('segments').addDocuments(meiliDocs)
+      } catch (e) {
+        console.warn('Meili indexing failed for manual law:', e)
+      }
+    }
+
+    res.json({ ok: true, id: law.id, segments_count: segments.length })
+  } catch (e) {
+    console.error(e)
+    res.status(500).json({ error: String(e) })
+  }
+})
+
+// Admin: Delete law
+app.delete('/api/admin/laws/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id)
+    const law = await get(db, 'SELECT * FROM laws WHERE id = ?', [id])
+    if (!law) return res.status(404).json({ error: 'Not found' })
+
+    // 1. Delete from MeiliSearch
+    if (meili) {
+      try {
+        await meili.index('laws').deleteDocument(id)
+        
+        // Get segment IDs to delete from Meili
+        const segments = await all(db, 'SELECT id FROM segments WHERE law_id = ?', [id])
+        const segmentIds = segments.map(s => s.id)
+        if (segmentIds.length > 0) {
+          await meili.index('segments').deleteDocuments(segmentIds)
+        }
+      } catch (e) {
+        console.warn('Meili delete failed:', e)
+      }
+    }
+
+    // 2. Delete PDF file
+    if (law.path_pdf) {
+      const absPath = path.resolve(law.path_pdf) // law.path_pdf is likely absolute or relative to root
+      // Check if it's absolute
+      const finalPath = path.isAbsolute(law.path_pdf) ? law.path_pdf : path.resolve(process.cwd(), law.path_pdf)
+      
+      try {
+        if (await fs.pathExists(finalPath)) {
+          await fs.remove(finalPath)
+        }
+      } catch (e) {
+        console.warn('File delete failed:', e)
+      }
+    }
+
+    // 3. Delete from SQLite
+    await run(db, 'DELETE FROM segments WHERE law_id = ?', [id])
+    await run(db, 'DELETE FROM files WHERE law_id = ?', [id])
+    await run(db, 'DELETE FROM laws WHERE id = ?', [id])
+
+    res.json({ ok: true })
+  } catch (e) {
+    console.error(e)
+    res.status(500).json({ error: String(e) })
+  }
+})
+
+// Admin: Edit law (re-parse text if provided)
+app.put('/api/admin/laws/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id)
+    const { title, jurisdiction, date, gazette_key, text } = req.body
+    
+    if (!title || !jurisdiction) {
+      return res.status(400).json({ error: 'Missing required fields' })
+    }
+
+    const existing = await get(db, 'SELECT * FROM laws WHERE id = ?', [id])
+    if (!existing) return res.status(404).json({ error: 'Law not found' })
+
+    // 1. Update Metadata
+    const title_normalized = normalizeTitle(title)
+    await run(
+      db,
+      `UPDATE laws 
+       SET title = ?, jurisdiction = ?, gazette_key = ?, gazette_date = ?, title_normalized = ?, updated_at = datetime('now')
+       WHERE id = ?`,
+      [title, jurisdiction, gazette_key || null, date || null, title_normalized, id]
+    )
+
+    // 2. Handle Text Update (if provided and different)
+    // Note: If text is provided, we regenerate PDF and segments.
+    // If text is NOT provided (e.g. metadata only edit), we skip this.
+    // Ideally frontend should send text if it wants to edit it.
+    
+    if (text) {
+        // Save raw text if we support it (adding column if missing)
+        try {
+            await run(db, 'UPDATE laws SET text_content = ? WHERE id = ?', [text, id])
+        } catch (e) {
+            // Column might not exist, ignore or migrate
+        }
+
+        // Regenerate PDF
+        // Remove old PDF if path changes? Path is derived from title + gazette.
+        // If title changed, we might want to delete old file.
+        // For simplicity, generate new PDF and update path.
+        // Old PDF might remain as orphan if we don't delete it.
+        if (existing.path_pdf) {
+            try {
+                const oldPath = path.resolve(existing.path_pdf)
+                if (await fs.pathExists(oldPath)) await fs.remove(oldPath)
+            } catch {}
+        }
+
+        const path_pdf = await pdfService.generatePdf(title, text, jurisdiction, gazette_key)
+        await run(db, 'UPDATE laws SET path_pdf = ? WHERE id = ?', [path_pdf, id])
+
+        // Re-parse Segments
+        // 1. Fetch old segment IDs to delete from Meili
+        const oldSegments = await all(db, 'SELECT id FROM segments WHERE law_id = ?', [id])
+        const oldSegmentIds = oldSegments.map(s => s.id)
+
+        // 2. Delete from Meili (if exists)
+        if (meili && oldSegmentIds.length > 0) {
+            try {
+                await meili.index('segments').deleteDocuments(oldSegmentIds)
+            } catch (e) {
+                console.warn('Failed to delete old segments from Meili:', e)
+            }
+        }
+
+        // 3. Delete old segments from SQLite
+        await run(db, 'DELETE FROM segments WHERE law_id = ?', [id])
+
+        // Parse new
+        const segments = await parseSegmentsFromPdf(path_pdf)
+        for (const s of segments) {
+            await run(
+                db,
+                'INSERT INTO segments (law_id, segment_type, label, number, text, page_hint) VALUES (?, ?, ?, ?, ?, ?)',
+                [id, 'article', s.label, s.number, s.text, s.page_hint]
+            )
+        }
+
+        // Update MeiliSearch Segments
+        if (meili) {
+            try {
+                // Index new segments
+                const insertedSegments = await all(db, 'SELECT id, label, number, text FROM segments WHERE law_id = ?', [id])
+                const meiliDocs = insertedSegments.map(s => ({
+                    id: s.id,
+                    law_id: id,
+                    label: s.label,
+                    number: s.number,
+                    text: s.text,
+                    law_title: title,
+                    jurisdiction: jurisdiction,
+                    gazette_key: gazette_key
+                }))
+                await meili.index('segments').addDocuments(meiliDocs)
+            } catch (e) {
+                console.warn('Meili re-indexing failed:', e)
+            }
+        }
+    }
+
+    // Update MeiliSearch Law Metadata
+    if (meili) {
+        try {
+            await meili.index('laws').addDocuments([{
+                id: id,
+                title: title,
+                jurisdiction: jurisdiction,
+                gazette_key: gazette_key,
+                title_normalized: title_normalized
+            }])
+        } catch (e) {
+             console.warn('Meili law update failed:', e)
+        }
+    }
+
+    res.json({ ok: true })
+  } catch (e) {
+    console.error(e)
     res.status(500).json({ error: String(e) })
   }
 })

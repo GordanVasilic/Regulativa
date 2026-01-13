@@ -52,21 +52,35 @@ sudo cp tools/linux/nginx.conf /etc/nginx/sites-available/regulativa
 sudo ln -sf /etc/nginx/sites-available/regulativa /etc/nginx/sites-enabled/
 sudo rm -f /etc/nginx/sites-enabled/default
 sudo nginx -t
-sudo systemctl restart nginx
+sudo systemctl reload nginx
 
-# 6. Start Services with PM2
-echo "🚀 Starting Services..."
-# Start MeiliSearch
-pm2 start "meilisearch --master-key 'masterKey' --db-path '/var/lib/meilisearch/data'" --name meili-search || pm2 restart meili-search
+# 6. Manage Services with PM2
+echo "🚀 Managing Services..."
 
-# Start API
+# Start/Restart MeiliSearch
+if pm2 describe meili-search > /dev/null; then
+    pm2 restart meili-search --update-env
+else
+    pm2 start "meilisearch --master-key 'masterKey' --db-path '/var/lib/meilisearch/data'" --name meili-search
+fi
+
+# Start/Restart API
 cd apps/api
-pm2 start dist/server.js --name regulativa-api || pm2 restart regulativa-api
+if pm2 describe regulativa-api > /dev/null; then
+    pm2 restart regulativa-api --update-env
+else
+    pm2 start dist/server.js --name regulativa-api
+fi
 cd ../..
 
-# Save PM2 list
+# 7. Save PM2 state
+echo "💾 Saving PM2 state..."
 pm2 save
-pm2 startup | tail -n 1 > /tmp/pm2_startup_cmd
-sh /tmp/pm2_startup_cmd
+
+# Ensure PM2 starts on boot
+# (This might need sudo, and usually prints a command to run, but 'pm2 startup' is idempotent-ish)
+# We'll assume setup-ubuntu.sh handled the startup command generation, or we can try to run it.
+# pm2 startup | tail -n 1 | sh # This is risky in non-interactive script if it requires sudo password.
+# Assuming user has run setup-ubuntu.sh which handles this manually usually.
 
 echo "✅ Deployment Complete! App should be live."

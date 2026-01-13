@@ -2,6 +2,8 @@ import { Routes, Route } from 'react-router-dom'
 import LawViewer from './LawViewer'
 import SearchPage from './SearchPage'
 import HomePage from './HomePage'
+import AdminAddLaw from './AdminAddLaw'
+import AdminLawsList from './AdminLawsList'
 
 export default function App() {
 
@@ -18,6 +20,9 @@ export default function App() {
           <Route path="/" element={<HomePage />} />
           <Route path="/search" element={<SearchPage />} />
           <Route path="/viewer/:id" element={<LawViewer />} />
+          <Route path="/admin/laws" element={<AdminLawsList />} />
+          <Route path="/admin/laws/new" element={<AdminAddLaw />} />
+          <Route path="/admin/laws/:id/edit" element={<AdminAddLaw />} />
         </Routes>
       </div>
     </div>

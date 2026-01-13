@@ -145,20 +145,27 @@ export default function LawViewer() {
 
   // Helpers for highlight
   const stripDiacritics = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-  const norm = (s: string) => stripDiacritics(s).toLowerCase()
+  const norm = (s: string) => stripDiacritics(s).toLowerCase().replace(/\u00A0/g, ' ')
   const highlightTerms = useMemo(() => {
     // Ako korisnik traži unutar PDF-a, označi SAMO taj novi pojam.
     // U suprotnom, označi pojmove iz početnog upita (q) s liste.
     const qSrc = (query || '').trim()
     const qTokens = qSrc.split(/\s+/).filter((t) => t.length >= 3)
     const sSrc = pdfSearch.trim()
-    const sTokens = sSrc.split(/\s+/).filter((t) => t.length >= 2)
-    const activeTokens = sTokens.length > 0 ? sTokens : qTokens
+    
+    // Ako korisnik traži unutar PDF-a, koristimo ISKLJUČIVO uneseni izraz kao frazu.
+    // Ovo sprječava da se za "član 4" označe sva pojavljivanja riječi "član" i broja "4" odvojeno.
+    const activeTokens = sSrc ? [sSrc] : qTokens
     const set = new Set(activeTokens.map((t) => norm(t)))
     // Dodaj broj člana SAMO kada nema aktivne lokalne pretrage
-    if (sTokens.length === 0 && typeof targetArticleNum === 'number' && !Number.isNaN(targetArticleNum)) {
-      set.add(String(targetArticleNum))
-      set.add(`clan ${targetArticleNum}`) // Add "clan X" as well for better context match
+    if (!sSrc && typeof targetArticleNum === 'number' && !Number.isNaN(targetArticleNum)) {
+      // Ne dodajemo sam broj (npr. "5") jer to matchuje i datume, stranice itd.
+      // Umjesto toga, dodajemo specifične prefikse.
+      set.add(`clan ${targetArticleNum}`)
+      set.add(`cl ${targetArticleNum}`)
+      set.add(`cl. ${targetArticleNum}`)
+      // Za svaki slučaj, ako je u PDF-u "Član5" (bez razmaka)
+      set.add(`clan${targetArticleNum}`)
     }
     return Array.from(set)
   }, [query, pdfSearch, targetArticleNum])
@@ -220,79 +227,163 @@ export default function LawViewer() {
     return html
   }
 
-  // Kada je odabrana stranica i dokument učitan, skrolaj na tu stranicu
-  useEffect(() => {
-    if (!numPages || !page) return
-    const container = viewerRef.current
-    // sačekaj da se stranice renderuju
-    const t = setTimeout(() => {
-      if (!container) return
-      const el = container.querySelector(`#page-${page}`) as HTMLElement | null
-      if (el) {
-        // Ako je aktivna PDF pretraga ili imamo target/highlighte, prepusti skrolanje drugom efektu
-        if (!pdfSearch.trim() && !targetArticleNum && highlightTerms.length === 0) {
-          el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  // Helper: Robustly find text in the text layer (handles split spans, formatting)
+  const findTextInLayer = (layer: HTMLElement, searchText: string, isArticleSearch = false): HTMLElement | null => {
+    const spans = Array.from(layer.querySelectorAll('span')) as HTMLElement[]
+    if (spans.length === 0) return null
+
+    let fullText = ''
+    const spanMap: { start: number; el: HTMLElement }[] = []
+
+    // Normalize: NFD decomposition, strip marks, toLowerCase, handle non-breaking space
+    const normalize = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\u00A0/g, ' ')
+
+    for (const span of spans) {
+      const txt = normalize(span.textContent || '')
+      // Add space to separate spans so "end" of one and "start" of next don't merge inappropriately
+      // BUT for strict phrase matching, extra spaces might hurt if the PDF doesn't have them.
+      // However, PDF text layer spans usually break on spaces or formatting changes.
+      // We'll add a space only if the span text doesn't end with one? 
+      // Safer: Always add space and normalize the search query to allow spaces?
+      // Let's stick to the previous robust logic: add space.
+      if (!txt.trim()) continue
+      spanMap.push({ start: fullText.length, el: span })
+      fullText += txt + ' '
+    }
+
+    let matchIndex = -1
+    const searchNorm = normalize(searchText).trim()
+
+    if (isArticleSearch) {
+      // Specific logic for Article Numbers (e.g. "Clan 34")
+      const num = parseInt(searchText, 10)
+      if (Number.isNaN(num)) return null
+      
+      // Priority 1: Prefix + Number
+      const regexPrefix = new RegExp(`(?:clan|clanak|cl|član|članak|čl|члан|чланак|чл)\\W{0,15}${num}(?!\\d)`, 'i')
+      const m1 = regexPrefix.exec(fullText)
+      if (m1) {
+        matchIndex = m1.index
+      } else {
+        // Priority 2: Standalone Number (risky, but sometimes necessary)
+        const regexNum = new RegExp(`(?:^|[^0-9])(${num})(?!\\d)`, 'i')
+        const m2 = regexNum.exec(fullText)
+        if (m2) {
+          const offset = m2[0].indexOf(m2[1])
+          matchIndex = m2.index + offset
         }
       }
-    }, 150)
-    return () => clearTimeout(t)
-  }, [page, numPages, targetArticleNum, highlightTerms.length])
+    } else {
+      // Generic Phrase Search
+      matchIndex = fullText.indexOf(searchNorm)
+    }
 
-  // Nakon promjene stranice ili termina, pokušaj skrolati do markiranog broja člana (ako postoji),
-  // u suprotnom do prvog highlight-a na stranici. Pokušaj nekoliko puta jer textLayer može kasniti.
+    if (matchIndex !== -1) {
+      // Find the span corresponding to matchIndex
+      for (const item of spanMap) {
+        if (item.start <= matchIndex) {
+          // Check if this span is "close enough" or covers the start
+          // Since spans are sequential, the last one with start <= matchIndex is the one containing the start.
+          // We iterate and keep updating 'bestSpan' until we pass the index.
+        } else {
+          break
+        }
+      }
+      // Efficient lookup:
+      let bestSpan: HTMLElement | null = null
+      for (let i = 0; i < spanMap.length; i++) {
+        if (spanMap[i].start <= matchIndex) {
+          bestSpan = spanMap[i].el
+        } else {
+          break
+        }
+      }
+      return bestSpan
+    }
+    return null
+  }
+
+  // Unified Scroll/Navigation Effect
   useEffect(() => {
+    if (!page || !viewerRef.current) return
+
+    // Flag to track if we are attempting a specific target scroll
+    const isTargeting = !!targetArticleNum || !!pdfSearch.trim()
+
     let attempts = 0
-    const maxAttempts = 10
-    const tick = () => {
+    const maxAttempts = 30 // ~6 seconds
+    
+    const attemptScroll = () => {
       const container = viewerRef.current
       if (!container) return
-      const scope = page ? (container.querySelector(`#page-${page} .textLayer`) as HTMLElement | null) : null
-      const layer = scope || (container.querySelector('.textLayer') as HTMLElement | null)
-      if (!layer) {
-        if (++attempts < maxAttempts) setTimeout(tick, 200)
+
+      const pageEl = container.querySelector(`#page-${page}`) as HTMLElement | null
+      if (!pageEl) {
+        // Page container not rendered yet
+        if (++attempts < maxAttempts) setTimeout(attemptScroll, 200)
         return
       }
-      let target: HTMLElement | null = null
-      if (typeof targetArticleNum === 'number' && !Number.isNaN(targetArticleNum)) {
-        const marks = Array.from(layer.querySelectorAll('span.pdf-hl')) as HTMLElement[]
-        const numStr = String(targetArticleNum)
-        // Priority 1: Look for "Član X" style matches (normalized)
-        target = marks.find((m) => {
-          const t = m.textContent?.trim().toLowerCase() || ''
-          const normT = t.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-          return normT.includes(`clan ${numStr}`) || normT.includes(`cl ${numStr}`) || normT.includes(`cl. ${numStr}`)
-        }) || null
 
-        // Priority 2: Exact number match (if "Član X" not found)
-        if (!target) {
-          target = marks.find((m) => m.textContent?.trim() === numStr) || null
+      // If we are just changing pages (no specific target), scroll to top of page
+      if (!isTargeting) {
+        pageEl.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        return
+      }
+
+      // We have a target (Article or Search Term)
+      const layer = pageEl.querySelector('.textLayer') as HTMLElement | null
+      if (!layer || layer.children.length === 0) {
+        // Text layer not ready
+        if (++attempts < maxAttempts) setTimeout(attemptScroll, 200)
+        return
+      }
+
+      let targetEl: HTMLElement | null = null
+
+      // 1. Try finding by Article Number
+      if (targetArticleNum) {
+        targetEl = findTextInLayer(layer, String(targetArticleNum), true)
+      }
+      
+      // 2. Try finding by Search Term (if no article target or article not found)
+      if (!targetEl && pdfSearch.trim()) {
+        // First try standard highlights
+        targetEl = layer.querySelector('span.pdf-hl') as HTMLElement | null
+        // If not found (e.g. split spans), try robust text search
+        if (!targetEl) {
+           targetEl = findTextInLayer(layer, pdfSearch)
         }
       }
-      if (!target) {
-        // Fallback na prvi PDF highlight element
-        target = (layer.querySelector('span.pdf-hl') as HTMLElement | null)
+
+      // 3. Fallback for Article: try existing highlights if robust search failed
+      if (!targetEl && targetArticleNum) {
+         targetEl = layer.querySelector('span.pdf-hl') as HTMLElement | null
       }
-      if (target) {
-        const container = viewerRef.current
-        if (container) {
-          const cRect = container.getBoundingClientRect()
-          const tRect = target.getBoundingClientRect()
-          const offset = (tRect.top - cRect.top) + container.scrollTop
-          const centeredTop = Math.max(0, Math.min(container.scrollHeight - container.clientHeight, Math.round(offset - container.clientHeight / 2)))
-          container.scrollTo({ top: centeredTop, behavior: 'smooth' })
-        }
-      } else if (++attempts < maxAttempts) {
-        setTimeout(tick, 200)
+
+      if (targetEl) {
+        scrollToTarget(container, targetEl)
       } else {
-        // Fallback: ako nismo našli highlight/target, skrolaj na vrh stranice
-        // Ovo pokriva slučaj kada smo promijenili stranicu ali nema highlighta
-        const el = container.querySelector(`#page-${page}`) as HTMLElement | null
-        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        // Target not found on this page despite text layer being ready.
+        // Fallback: Scroll to the top of the page so the user at least lands on the correct page.
+        pageEl.scrollIntoView({ behavior: 'smooth', block: 'start' })
       }
     }
-    const t = setTimeout(tick, 250)
+
+    // Debounce slightly to allow rendering
+    const t = setTimeout(attemptScroll, 100)
     return () => clearTimeout(t)
-  }, [page, highlightTerms.join('|'), targetArticleNum])
+  }, [page, targetArticleNum, pdfSearch, highlightTerms]) // Re-run when these change
+
+
+
+  // Helper: Scroll container to center the target element
+  const scrollToTarget = (container: HTMLElement, target: HTMLElement) => {
+    const tRect = target.getBoundingClientRect()
+    const cRect = container.getBoundingClientRect()
+    const offset = (tRect.top - cRect.top) + container.scrollTop
+    const centeredTop = Math.max(0, offset - (container.clientHeight / 2) + (tRect.height / 2))
+    container.scrollTo({ top: centeredTop, behavior: 'smooth' })
+  }
 
   // Pomoćne funkcije za skokove po highlightima (lokalna pretraga)
   const getHighlights = () => {
@@ -300,30 +391,49 @@ export default function LawViewer() {
     if (!container) return [] as HTMLElement[]
     return Array.from(container.querySelectorAll('span.pdf-hl')) as HTMLElement[]
   }
+
   const jumpToFirstHighlight = () => {
     let attempts = 0
     const maxAttempts = 10
     const tick = () => {
       const marks = getHighlights()
-      if (marks.length === 0) {
+      let target: HTMLElement | null = null
+
+      if (marks.length > 0) {
+        setSearchTotal(marks.length)
+        setSearchIdx(1)
+        target = marks[0]
+      } else if (pdfSearch.trim()) {
+        // Fallback: Try robust search in visible text layers
+        const container = viewerRef.current
+        if (container) {
+          const layers = Array.from(container.querySelectorAll('.textLayer')) as HTMLElement[]
+          for (const layer of layers) {
+             const found = findTextInLayer(layer, pdfSearch)
+             if (found) {
+               target = found
+               // Note: We can't easily count total matches for robust search without scanning everything,
+               // so we just set 1/1 to indicate "found something".
+               setSearchTotal(1)
+               setSearchIdx(1)
+               break
+             }
+          }
+        }
+      }
+
+      if (target) {
+        const container = viewerRef.current
+        if (container) {
+          scrollToTarget(container, target)
+        }
+        const pageEl = target.closest('[id^="page-"]') as HTMLElement | null
+        if (pageEl?.id) {
+          const num = Number(pageEl.id.replace('page-', ''))
+          if (!Number.isNaN(num)) setPage(num)
+        }
+      } else {
         if (++attempts < maxAttempts) setTimeout(tick, 200)
-        return
-      }
-      setSearchTotal(marks.length)
-      setSearchIdx(1)
-      const target = marks[0]
-      const container = viewerRef.current
-      if (container) {
-        const cRect = container.getBoundingClientRect()
-        const tRect = target.getBoundingClientRect()
-        const offset = (tRect.top - cRect.top) + container.scrollTop
-        const centeredTop = Math.max(0, Math.min(container.scrollHeight - container.clientHeight, Math.round(offset - container.clientHeight / 2)))
-        container.scrollTo({ top: centeredTop, behavior: 'smooth' })
-      }
-      const pageEl = target.closest('[id^="page-"]') as HTMLElement | null
-      if (pageEl?.id) {
-        const num = Number(pageEl.id.replace('page-', ''))
-        if (!Number.isNaN(num)) setPage(num)
       }
     }
     setTimeout(tick, 200)
@@ -342,11 +452,7 @@ export default function LawViewer() {
     setSearchIdx(nextIdx)
     const container = viewerRef.current
     if (container) {
-      const cRect = container.getBoundingClientRect()
-      const tRect = target.getBoundingClientRect()
-      const offset = (tRect.top - cRect.top) + container.scrollTop
-      const centeredTop = Math.max(0, Math.min(container.scrollHeight - container.clientHeight, Math.round(offset - container.clientHeight / 2)))
-      container.scrollTo({ top: centeredTop, behavior: 'smooth' })
+      scrollToTarget(container, target)
     }
     const pageEl = target.closest('[id^="page-"]') as HTMLElement | null
     if (pageEl?.id) {

@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react'
+import { Link } from 'react-router-dom'
 import GlobalSearch, { type Law, type Segment } from './GlobalSearch'
 import HomeLists from './HomeLists'
 import SearchResults from './SearchResults'
 import JurisdictionModal from './JurisdictionModal'
-import { BarChart3, Scale } from 'lucide-react'
+import { BarChart3, Scale, PlusCircle } from 'lucide-react'
 import HealthStatus from './HealthStatus'
 
 const API = '/api'
@@ -55,6 +56,12 @@ export default function HomePage() {
                 <p className="text-base text-slate-600 max-w-2xl mx-auto">
                     Centralizovana baza pravnih propisa regiona.
                 </p>
+                <div className="pt-2">
+                    <Link to="/admin/laws" className="inline-flex items-center gap-1 text-xs text-slate-400 hover:text-blue-600 transition-colors">
+                        <PlusCircle size={12} />
+                        Admin Panel
+                    </Link>
+                </div>
             </div>
             <GlobalSearch onSearchResults={handleSearchResults} />
 

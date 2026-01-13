@@ -23,7 +23,14 @@ fi
 
 # 2. Install Dependencies
 echo "📦 Installing dependencies..."
-npm install
+# Create .env for API if not exists
+if [ ! -f apps/api/.env ]; then
+    echo "📝 Creating .env for API..."
+    echo "MEILI_HOST=http://127.0.0.1:7700" > apps/api/.env
+    echo "MEILI_KEY=masterKey" >> apps/api/.env
+    echo "PORT=5000" >> apps/api/.env
+fi
+
 cd apps/api && npm install && cd ../..
 cd apps/web && npm install && cd ../..
 

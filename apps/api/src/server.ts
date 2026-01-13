@@ -9,8 +9,8 @@ import sqlite3 from 'sqlite3'
 import { open } from 'node:fs/promises'
 import { MeiliSearch } from 'meilisearch'
 import mammoth from 'mammoth'
-import { pdfService } from './services/pdf.service'
-import { parseSegments, parseSegmentsFromPdf, normalizeTitle } from './services/law-parsing.service'
+import { pdfService } from './services/pdf.service.js'
+import { parseSegments, parseSegmentsFromPdf, normalizeTitle } from './services/law-parsing.service.js'
 
 const PORT = process.env.PORT ? Number(process.env.PORT) : 5000
 const ROOT = path.resolve(process.cwd())

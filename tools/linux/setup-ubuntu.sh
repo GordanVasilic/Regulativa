@@ -28,6 +28,11 @@ fi
 echo "🟢 Installing Node.js..."
 curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
 sudo apt-get install -y nodejs
+# Ensure npm is installed (sometimes separate in distro packages)
+if ! command -v npm &> /dev/null; then
+    echo "⚠️ npm not found, installing explicitly..."
+    sudo apt-get install -y npm
+fi
 
 # 3. Install PM2 (Process Manager)
 echo "Process Manager (PM2) installing..."

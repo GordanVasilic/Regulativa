@@ -63,7 +63,7 @@ export class PdfService {
     // Ensure directory exists
     await fs.ensureDir(path.dirname(outPath));
 
-    const browser = await puppeteer.launch({ headless: 'new' });
+    const browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox'] } as any);
     try {
       const page = await browser.newPage();
       

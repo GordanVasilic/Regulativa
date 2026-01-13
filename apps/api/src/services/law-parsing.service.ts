@@ -201,7 +201,7 @@ export async function parseSegmentsFromPdf(pdfPath: string): Promise<LawSegment[
     const pages: string[] = [];
     for (let i = 1; i <= pdf.numPages; i++) {
       const page = await pdf.getPage(i);
-      const textContent: any = await page.getTextContent({ normalizeWhitespace: true, disableCombineTextItems: false });
+      const textContent: any = await page.getTextContent({ normalizeWhitespace: true, disableCombineTextItems: false } as any);
       let lastY = null as number | null;
       let lastX = null as number | null;
       let lastChar = '';

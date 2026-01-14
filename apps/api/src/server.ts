@@ -133,7 +133,11 @@ await run(
 let meili: MeiliSearch | null = null
 try {
   if (process.env.MEILI_HOST) {
-    meili = new MeiliSearch({ host: process.env.MEILI_HOST!, apiKey: process.env.MEILI_KEY })
+    meili = new MeiliSearch({ 
+      host: process.env.MEILI_HOST!, 
+      apiKey: process.env.MEILI_KEY,
+      timeout: 10000 // 10s timeout to avoid "Request Timeout" on low-RAM server
+    })
     // ensure index exists
     await meili.createIndex('documents', { primaryKey: 'id' }).catch(() => null)
     const index = meili.index('documents')

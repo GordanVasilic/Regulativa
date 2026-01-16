@@ -1,6 +1,6 @@
 
 import * as cheerio from 'cheerio'
-import fetch from 'node-fetch'
+// import fetch from 'node-fetch' // Use native fetch
 import sqlite3 from 'sqlite3'
 import { normalizeTitle, parseSegments } from './law-parsing.service.js'
 import { groupingService } from './grouping.service.js'

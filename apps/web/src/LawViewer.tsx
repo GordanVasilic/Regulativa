@@ -31,7 +31,7 @@ type Segment = {
   text: string
 }
 
-const API = '/api'
+const API_BASE = import.meta.env.VITE_API_URL || '/api'
 
 export default function LawViewer() {
   const { id } = useParams()
@@ -75,9 +75,9 @@ export default function LawViewer() {
     async function load() {
       setLoading(true)
       try {
-        const lawRes = await fetch(`${API}/laws/${lawId}`)
+        const lawRes = await fetch(`${API_BASE}/laws/${lawId}`)
         const lawJson = await lawRes.json()
-        const segRes = await fetch(`${API}/segments?law_id=${lawId}&limit=500`)
+        const segRes = await fetch(`${API_BASE}/segments?law_id=${lawId}&limit=500`)
         const segJson = await segRes.json()
         if (!mounted) return
         setLaw(lawJson)
@@ -95,7 +95,7 @@ export default function LawViewer() {
     }
     load()
     // ping API to increment views
-    fetch(`${API}/laws/${lawId}/open`, { method: 'POST' }).catch(() => { })
+    fetch(`${API_BASE}/laws/${lawId}/open`, { method: 'POST' }).catch(() => { })
     return () => {
       mounted = false
     }
@@ -151,7 +151,7 @@ export default function LawViewer() {
 
   // Do not return early before hooks; render conditionally in JSX below
 
-  const pdfUrl = `${API}/pdf/${lawId}`
+  const pdfUrl = `${API_BASE}/pdf/${lawId}`
 
   // Helpers for highlight
   const stripDiacritics = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '')

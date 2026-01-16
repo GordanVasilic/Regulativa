@@ -22,7 +22,7 @@ export type Segment = {
   gazette_date?: string | null
 }
 
-const API = '/api'
+const API_BASE = import.meta.env.VITE_API_URL || '/api'
 
 interface GlobalSearchProps {
   onSearchResults?: (laws: Law[], segments: Segment[], query?: string) => void
@@ -73,8 +73,8 @@ export default function GlobalSearch({ onSearchResults }: GlobalSearchProps) {
       if (jurisdiction) params.set('jurisdiction', jurisdiction)
 
       const [lawsRes, segsRes] = await Promise.all([
-        fetch(`${API}/laws/search?${params.toString()}`),
-        fetch(`${API}/segments/search?${params.toString()}`)
+        fetch(`${API_BASE}/laws/search?${params.toString()}`),
+        fetch(`${API_BASE}/segments/search?${params.toString()}`)
       ])
 
       const lawsData = await lawsRes.json()

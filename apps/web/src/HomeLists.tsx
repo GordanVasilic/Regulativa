@@ -37,6 +37,7 @@ function formatDate(dateStr?: string | null) {
 export default function HomeLists({ jurisdiction }: HomeListsProps) {
   const [latest, setLatest] = useState<Law[]>([])
   const [popular, setPopular] = useState<Law[]>([])
+  const API_BASE = import.meta.env.VITE_API_URL || '/api'
 
   useEffect(() => {
     const params = new URLSearchParams()
@@ -44,7 +45,7 @@ export default function HomeLists({ jurisdiction }: HomeListsProps) {
     params.set('sort', 'gazette_desc')
     if (jurisdiction) params.set('jurisdiction', jurisdiction)
 
-    fetch(`/api/laws?${params}`)
+    fetch(`${API_BASE}/laws?${params}`)
       .then(res => res.json())
       .then(data => setLatest(Array.isArray(data) ? data : []))
       .catch(err => console.error(err))
@@ -53,7 +54,7 @@ export default function HomeLists({ jurisdiction }: HomeListsProps) {
     topParams.set('limit', '6')
     if (jurisdiction) topParams.set('jurisdiction', jurisdiction)
 
-    fetch(`/api/laws/top?${topParams}`)
+    fetch(`${API_BASE}/laws/top?${topParams}`)
       .then(res => res.json())
       .then(data => setPopular(Array.isArray(data) ? data : []))
       .catch(err => console.error(err))

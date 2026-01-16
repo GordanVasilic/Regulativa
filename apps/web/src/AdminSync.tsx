@@ -21,6 +21,7 @@ export default function AdminSync() {
   const [selectedIndices, setSelectedIndices] = useState<Set<number>>(new Set())
   const [error, setError] = useState<string | null>(null)
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
+  const API_BASE = import.meta.env.VITE_API_URL || '/api'
 
   const handleCheck = async () => {
     setChecking(true)
@@ -30,7 +31,7 @@ export default function AdminSync() {
     setSuccessMsg(null)
 
     try {
-      const res = await fetch('http://localhost:5000/api/admin/scraper/check', {
+      const res = await fetch(`${API_BASE}/admin/scraper/check`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ jurisdiction })
@@ -74,7 +75,7 @@ export default function AdminSync() {
     const toImport = foundLaws.filter((_, i) => selectedIndices.has(i))
 
     try {
-      const res = await fetch('http://localhost:5000/api/admin/scraper/import', {
+      const res = await fetch(`${API_BASE}/admin/scraper/import`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ laws: toImport })

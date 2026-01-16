@@ -121,6 +121,8 @@ const GroupItem = ({ group, onSelect, isSelected }: { group: GroupSuggestion, on
   )
 }
 
+const API_BASE = import.meta.env.VITE_API_URL || '/api'
+
 export default function AdminAddLaw() {
   const navigate = useNavigate()
   const { id } = useParams() // Check if we are editing
@@ -154,7 +156,7 @@ export default function AdminAddLaw() {
   useEffect(() => {
     if (isEditing && id) {
       setFetching(true)
-      fetch(`http://localhost:5000/api/laws/${id}`)
+      fetch(`${API_BASE}/laws/${id}`)
         .then(async res => {
           if (!res.ok) {
             const text = await res.text()
@@ -180,7 +182,7 @@ export default function AdminAddLaw() {
           
           // If has group, fetch group details to display name
           if (data.group_id) {
-             fetch(`http://localhost:5000/api/admin/law-groups/${data.group_id}`)
+             fetch(`${API_BASE}/admin/law-groups/${data.group_id}`)
                .then(res => res.json())
                .then(group => {
                  if (group && !group.error) {
@@ -200,7 +202,7 @@ export default function AdminAddLaw() {
     setCheckingGroups(true)
     try {
       const params = new URLSearchParams({ title, jurisdiction })
-      const res = await fetch(`http://localhost:5000/api/admin/law-groups/suggest?${params}`)
+      const res = await fetch(`${API_BASE}/admin/law-groups/suggest?${params}`)
       const data = await res.json()
       if (Array.isArray(data)) {
         setSuggestions(data)
@@ -217,7 +219,7 @@ export default function AdminAddLaw() {
     setSearchingManual(true)
     try {
       const params = new URLSearchParams({ q: searchQuery, jurisdiction: form.jurisdiction })
-      const res = await fetch(`http://localhost:5000/api/admin/law-groups/search?${params}`)
+      const res = await fetch(`${API_BASE}/admin/law-groups/search?${params}`)
       const data = await res.json()
       if (Array.isArray(data)) {
         setSearchResults(data)
@@ -278,8 +280,8 @@ export default function AdminAddLaw() {
 
     try {
       const url = isEditing
-        ? `http://localhost:5000/api/admin/laws/${id}`
-        : 'http://localhost:5000/api/admin/laws'
+        ? `${API_BASE}/admin/laws/${id}`
+        : `${API_BASE}/admin/laws`
 
       const method = isEditing ? 'PUT' : 'POST'
 

@@ -37,7 +37,7 @@ type Law = {
   gazette_date?: string
 }
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
+const API_BASE = import.meta.env.VITE_API_URL || '/api'
 const JURISDICTIONS = ['RS', 'FBiH', 'BiH', 'Crna Gora', 'Brcko', 'Srbija']
 
 export default function AdminDashboard() {
@@ -110,14 +110,10 @@ export default function AdminDashboard() {
       if (filterDateFrom) params.set('date_from', filterDateFrom)
       if (filterDateTo) params.set('date_to', filterDateTo)
 
-      // Note: API_BASE already includes /api, but the laws endpoint might be at root /laws or /api/laws depending on server setup
-      // In server.ts: app.get('/laws') -> this is likely /laws not /api/laws if not router mounted?
-      // Wait, server.ts has app.get('/laws') but also app.get('/api/admin/...')
-      // Let's assume /laws is at root based on previous reads, BUT API_BASE usually points to /api prefix?
-      // I'll strip /api from API_BASE if needed or just use logic.
-
-      const baseUrl = API_BASE.endsWith('/api') ? API_BASE.slice(0, -4) : API_BASE
-      const res = await fetch(`${baseUrl}/laws?${params}`)
+      // Note: API_BASE already includes /api. 
+      // Nginx is configured to proxy /api/ to the backend root.
+      // So /api/laws will be proxied to backend:5000/laws.
+      const res = await fetch(`${API_BASE}/laws?${params}`)
       const data = await res.json()
 
       if (data.data) {

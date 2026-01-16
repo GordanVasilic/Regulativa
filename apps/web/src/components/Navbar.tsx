@@ -14,9 +14,10 @@ export default function Navbar() {
 
     const showBack = !isHome && !isAdmin
     const showHome = !isHome
+    const API_BASE = import.meta.env.VITE_API_URL || '/api'
 
     useEffect(() => {
-        fetch('/api/laws/stats')
+        fetch(`${API_BASE}/laws/stats`)
             .then(res => res.json())
             .then(data => setStats(data))
             .catch(err => console.error('Failed to fetch stats:', err))

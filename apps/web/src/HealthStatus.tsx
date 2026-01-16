@@ -11,11 +11,12 @@ type Health = {
 export default function HealthStatus() {
   const [health, setHealth] = useState<Health | null>(null)
   const [loading, setLoading] = useState(false)
+  const API_BASE = import.meta.env.VITE_API_URL || '/api'
 
   useEffect(() => {
     let mounted = true
     setLoading(true)
-    fetch('/api/health')
+    fetch(`${API_BASE}/health`)
       .then(r => r.json())
       .then(d => { if (mounted) setHealth(d) })
       .catch(() => { if (mounted) setHealth(null) })

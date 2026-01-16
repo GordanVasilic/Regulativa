@@ -13,7 +13,7 @@ type SegmentHit = {
   gazette_key?: string | null
 }
 
-const API = '/api'
+const API_BASE = import.meta.env.VITE_API_URL || '/api'
 
 export default function SearchPage() {
   const [params, setParams] = useSearchParams()
@@ -68,7 +68,7 @@ export default function SearchPage() {
         lsp.set('offset', '0')
         if (effectiveJur) lsp.set('jurisdiction', effectiveJur)
         try {
-          const lres = await fetch(`${API}/laws/search?${lsp.toString()}`)
+          const lres = await fetch(`${API_BASE}/laws/search?${lsp.toString()}`)
           const ljson = await lres.json()
           const candidates = Array.isArray(ljson?.hits) ? ljson.hits : (Array.isArray(ljson) ? ljson : [])
           const stripDia = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
@@ -95,7 +95,7 @@ export default function SearchPage() {
       }
       if (lawIdToUse !== null && !Number.isNaN(lawIdToUse)) usp.set('law_id', String(lawIdToUse))
       if (gazetteKey) usp.set('gazette_key', gazetteKey)
-      const res = await fetch(`${API}/segments/search?${usp.toString()}`)
+      const res = await fetch(`${API_BASE}/segments/search?${usp.toString()}`)
       const json = await res.json()
       const newHits = json.hits ?? json
       setHits(replace ? newHits : [...hits, ...newHits])
@@ -127,7 +127,7 @@ export default function SearchPage() {
       if (effectiveJur) usp.set('jurisdiction', effectiveJur)
       if (lawId !== null && !Number.isNaN(lawId)) usp.set('law_id', String(lawId))
       if (gazetteKey) usp.set('gazette_key', gazetteKey)
-      const res = await fetch(`${API}/segments/search?${usp.toString()}`)
+      const res = await fetch(`${API_BASE}/segments/search?${usp.toString()}`)
       const json = await res.json()
       const newHits = json.hits ?? json
       setHits(newHits)

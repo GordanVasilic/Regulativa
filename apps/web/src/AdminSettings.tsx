@@ -10,6 +10,8 @@ type ScraperConfig = {
   last_check: string | null
 }
 
+const API_BASE = import.meta.env.VITE_API_URL || '/api'
+
 export default function AdminSettings() {
   const [configs, setConfigs] = useState<ScraperConfig[]>([])
   const [loading, setLoading] = useState(false)
@@ -24,7 +26,7 @@ export default function AdminSettings() {
   const fetchConfigs = async () => {
     setLoading(true)
     try {
-      const res = await fetch('http://localhost:5000/api/admin/scraper/configs')
+      const res = await fetch(`${API_BASE}/admin/scraper/configs`)
       const data = await res.json()
       setConfigs(data)
     } catch (e) {
@@ -39,7 +41,7 @@ export default function AdminSettings() {
     setError(null)
     setSuccess(null)
     try {
-      const res = await fetch(`http://localhost:5000/api/admin/scraper/configs/${id}`, {
+      const res = await fetch(`${API_BASE}/admin/scraper/configs/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url })

@@ -44,6 +44,7 @@ export default function JurisdictionModal({ jurisdiction, onClose }: Jurisdictio
     const offsetRef = useRef(0)
     const loadingRef = useRef(false)
     const limit = 20
+    const API_BASE = import.meta.env.VITE_API_URL || '/api'
 
     const loadMore = useCallback(() => {
         if (loadingRef.current || !hasMore) return
@@ -57,7 +58,7 @@ export default function JurisdictionModal({ jurisdiction, onClose }: Jurisdictio
         params.set('offset', String(offsetRef.current))
         params.set('sort', 'gazette_desc')
 
-        fetch(`/api/laws?${params}`)
+        fetch(`${API_BASE}/laws?${params}`)
             .then(res => res.json())
             .then(data => {
                 const newLaws = Array.isArray(data) ? data : []
@@ -72,18 +73,18 @@ export default function JurisdictionModal({ jurisdiction, onClose }: Jurisdictio
                 setLoading(false)
                 loadingRef.current = false
             })
-    }, [jurisdiction, hasMore])
+    }, [jurisdiction, hasMore, API_BASE])
 
     // Fetch total count
     useEffect(() => {
-        fetch(`/api/laws/stats`)
+        fetch(`${API_BASE}/laws/stats`)
             .then(res => res.json())
             .then(data => {
                 const stat = data.find((s: any) => s.jurisdiction === jurisdiction)
                 if (stat) setTotal(stat.count)
             })
             .catch(err => console.error(err))
-    }, [jurisdiction])
+    }, [jurisdiction, API_BASE])
 
     // Reset state when jurisdiction changes
     useEffect(() => {

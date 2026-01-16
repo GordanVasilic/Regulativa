@@ -465,7 +465,7 @@ app.get('/laws/search', async (req, res) => {
   }
 })
 
-app.get('/api/laws/:id', async (req, res) => {
+app.get('/laws/:id', async (req, res) => {
   try {
     const id = Number(req.params.id)
     const law = await get(db, 'SELECT * FROM laws WHERE id = ?', [id])
@@ -482,40 +482,6 @@ app.get('/api/laws/:id', async (req, res) => {
         // If label is "Član 1", text is "Član 1\nTekst...".
         // So joining by newlines is enough.
         law.text_content = segments.map(s => s.text).join('\n\n')
-      }
-    }
-
-    // Fetch related laws from same group (if any)
-    let relatedLaws: any[] = []
-    if (law.group_id) {
-      relatedLaws = await all(
-        db,
-        `SELECT id, title, gazette_key, gazette_date 
-         FROM laws 
-         WHERE group_id = ? 
-         ORDER BY gazette_date ASC, id ASC`,
-        [law.group_id]
-      )
-    }
-
-    res.json({ ...law, related_laws: relatedLaws })
-  } catch (e) {
-    res.status(500).json({ error: String(e) })
-  }
-})
-
-// /laws/:id route - mirrors /api/laws/:id for Vite proxy compatibility
-app.get('/laws/:id', async (req, res) => {
-  try {
-    const id = Number(req.params.id)
-    const law = await get(db, 'SELECT * FROM laws WHERE id = ?', [id])
-    if (!law) return res.status(404).json({ error: 'Not found' })
-
-    // If text_content is missing, reconstruct from segments
-    if (!law.text_content) {
-      const segments = await all(db, 'SELECT label, text FROM segments WHERE law_id = ? ORDER BY id ASC', [id])
-      if (segments.length > 0) {
-        law.text_content = segments.map((s: any) => s.text).join('\n\n')
       }
     }
 
@@ -564,7 +530,7 @@ app.get('/pdf/:id', async (req, res) => {
 })
 
 // Preview: serve generated FBiH registry HTML for manual review
-app.get('/api/test/fbih/preview', async (_req, res) => {
+app.get('/test/fbih/preview', async (_req, res) => {
   try {
     const primary = path.join(process.cwd(), 'tmp', 'fbih_registry_preview.html')
     const alias = path.join(process.cwd(), 'tmp', 'fbih_single_article_preview.html')
@@ -798,7 +764,7 @@ app.post('/upload', upload.single('file'), async (req, res) => {
 
 
 // Admin: Add new law manually
-app.post('/api/admin/laws', async (req, res) => {
+app.post('/admin/laws', async (req, res) => {
   try {
     const { title, jurisdiction, date, gazette_key, text, group_id } = req.body
     if (!title || !jurisdiction || !text) {
@@ -870,7 +836,7 @@ app.post('/api/admin/laws', async (req, res) => {
 })
 
 // Admin: Delete law
-app.delete('/api/admin/laws/:id', async (req, res) => {
+app.delete('/admin/laws/:id', async (req, res) => {
   try {
     const id = Number(req.params.id)
     const law = await get(db, 'SELECT * FROM laws WHERE id = ?', [id])
@@ -920,7 +886,7 @@ app.delete('/api/admin/laws/:id', async (req, res) => {
 })
 
 // Admin: Edit law (re-parse text if provided)
-app.put('/api/admin/laws/:id', async (req, res) => {
+app.put('/admin/laws/:id', async (req, res) => {
   try {
     const id = Number(req.params.id)
     const { title, jurisdiction, date, gazette_key, text, group_id, link_to_law_id } = req.body
@@ -1077,7 +1043,7 @@ import { spawn } from 'child_process'
 // --- ADMIN ROUTES ---
 
 // 1. System Stats
-app.get('/api/admin/stats/system', async (_req, res) => {
+app.get('/admin/stats/system', async (_req, res) => {
   try {
     // RAM
     const totalMem = os.totalmem()
@@ -1111,7 +1077,7 @@ app.get('/api/admin/stats/system', async (_req, res) => {
 })
 
 // 2. Meili Stats
-app.get('/api/admin/stats/meili', async (_req, res) => {
+app.get('/admin/stats/meili', async (_req, res) => {
   try {
     // DB Count
     const dbRes = await get(db, 'SELECT COUNT(*) as cnt FROM laws')
@@ -1145,7 +1111,7 @@ app.get('/api/admin/stats/meili', async (_req, res) => {
 })
 
 // 3. Trigger Actions (Reindex)
-app.post('/api/admin/actions/reindex', async (req, res) => {
+app.post('/admin/actions/reindex', async (req, res) => {
   const { type } = req.body // 'full' or 'missing' (todo)
 
   if (type === 'full') {
@@ -1173,7 +1139,7 @@ app.post('/api/admin/actions/reindex', async (req, res) => {
 })
 
 // 4. Start MeiliSearch
-app.post('/api/admin/actions/start-meili', async (_req, res) => {
+app.post('/admin/actions/start-meili', async (_req, res) => {
   try {
     const host = process.env.MEILI_HOST
     const apiKey = process.env.MEILI_KEY
@@ -1210,7 +1176,7 @@ app.post('/api/admin/actions/start-meili', async (_req, res) => {
 })
 
 // 5. Sync Status & Action
-app.get('/api/admin/sync/compare', async (_req, res) => {
+app.get('/admin/sync/compare', async (_req, res) => {
   try {
     // 1. Local Count
     const localRes = await get(db, 'SELECT COUNT(*) as cnt FROM laws')
@@ -1248,7 +1214,7 @@ app.get('/api/admin/sync/compare', async (_req, res) => {
   }
 })
 
-app.post('/api/admin/actions/sync', async (_req, res) => {
+app.post('/admin/actions/sync', async (_req, res) => {
   try {
     console.log('Admin triggered sync from prod...')
     const script = path.resolve(process.cwd(), 'scripts', 'sync_prod_to_local.ts')
@@ -1271,7 +1237,7 @@ app.post('/api/admin/actions/sync', async (_req, res) => {
 // ============================================
 
 // List all law groups
-app.get('/api/law-groups', async (req, res) => {
+app.get('/law-groups', async (req, res) => {
   try {
     const jurisdiction = req.query.jurisdiction ? String(req.query.jurisdiction) : null
     const where = jurisdiction ? 'WHERE jurisdiction = ?' : ''
@@ -1292,7 +1258,7 @@ app.get('/api/law-groups', async (req, res) => {
 })
 
 // Get single law group with its laws
-app.get('/api/law-groups/:id', async (req, res) => {
+app.get('/law-groups/:id', async (req, res) => {
   try {
     const id = Number(req.params.id)
     const group = await get(db, 'SELECT * FROM law_groups WHERE id = ?', [id])
@@ -1313,7 +1279,7 @@ app.get('/api/law-groups/:id', async (req, res) => {
 })
 
 // Admin: Suggest law group
-app.get('/api/admin/law-groups/suggest', async (req, res) => {
+app.get('/admin/law-groups/suggest', async (req, res) => {
   try {
     const title = req.query.title ? String(req.query.title) : ''
     const jurisdiction = req.query.jurisdiction ? String(req.query.jurisdiction) : 'RS'
@@ -1328,7 +1294,7 @@ app.get('/api/admin/law-groups/suggest', async (req, res) => {
 })
 
 // Admin: Create a new law group
-app.post('/api/admin/law-groups', async (req, res) => {
+app.post('/admin/law-groups', async (req, res) => {
   try {
     const { jurisdiction, name, base_law_id, law_ids } = req.body
     if (!jurisdiction || !name) {
@@ -1358,7 +1324,7 @@ app.post('/api/admin/law-groups', async (req, res) => {
 })
 
 // Admin: Assign a law to a group
-app.post('/api/admin/laws/:id/assign-group', async (req, res) => {
+app.post('/admin/laws/:id/assign-group', async (req, res) => {
   try {
     const lawId = Number(req.params.id)
     const { group_id } = req.body
@@ -1379,10 +1345,10 @@ app.post('/api/admin/laws/:id/assign-group', async (req, res) => {
 })
 
 // Test route
-app.get('/api/ping', (req, res) => res.send('pong'))
+app.get('/ping', (req, res) => res.send('pong'))
 
 // Admin: Search law groups (simple search by name)
-app.get('/api/admin/law-groups/search', async (req, res) => {
+app.get('/admin/law-groups/search', async (req, res) => {
   try {
     const q = String(req.query.q || '').trim()
     const jurisdiction = req.query.jurisdiction ? String(req.query.jurisdiction) : null
@@ -1447,7 +1413,7 @@ app.get('/api/admin/law-groups/search', async (req, res) => {
 })
 
 // Admin: Get a law group details
-app.get('/api/admin/law-groups/:id', async (req, res) => {
+app.get('/admin/law-groups/:id', async (req, res) => {
   try {
     const id = Number(req.params.id)
     const group = await get(db, 'SELECT * FROM law_groups WHERE id = ?', [id])
@@ -1471,7 +1437,7 @@ app.get('/api/admin/law-groups/:id', async (req, res) => {
 })
 
 // Admin: Delete a law group (unlinks laws, does not delete them)
-app.delete('/api/admin/law-groups/:id', async (req, res) => {
+app.delete('/admin/law-groups/:id', async (req, res) => {
   try {
     const id = Number(req.params.id)
     const group = await get(db, 'SELECT id FROM law_groups WHERE id = ?', [id])
@@ -1491,7 +1457,7 @@ app.delete('/api/admin/law-groups/:id', async (req, res) => {
 // --- SCRAPER ROUTES ---
 
 // Get all scraper configs
-app.get('/api/admin/scraper/configs', async (_req, res) => {
+app.get('/admin/scraper/configs', async (_req, res) => {
   try {
     const configs = await all(db, 'SELECT * FROM scraper_configs')
     res.json(configs)
@@ -1501,7 +1467,7 @@ app.get('/api/admin/scraper/configs', async (_req, res) => {
 })
 
 // Update scraper config
-app.put('/api/admin/scraper/configs/:id', async (req, res) => {
+app.put('/admin/scraper/configs/:id', async (req, res) => {
   try {
     const id = Number(req.params.id)
     const { url } = req.body
@@ -1515,7 +1481,7 @@ app.put('/api/admin/scraper/configs/:id', async (req, res) => {
 })
 
 // Check for new laws
-app.post('/api/admin/scraper/check', async (req, res) => {
+app.post('/admin/scraper/check', async (req, res) => {
   try {
     const { jurisdiction } = req.body
     if (!jurisdiction) return res.status(400).json({ error: 'Jurisdiction required' })
@@ -1540,7 +1506,7 @@ app.post('/api/admin/scraper/check', async (req, res) => {
 })
 
 // Import selected laws
-app.post('/api/admin/scraper/import', async (req, res) => {
+app.post('/admin/scraper/import', async (req, res) => {
   try {
     const { laws } = req.body // Array of ScrapedLaw
     if (!Array.isArray(laws) || laws.length === 0) {

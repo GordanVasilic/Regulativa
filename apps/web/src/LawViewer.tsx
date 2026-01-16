@@ -1,10 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useParams } from 'react-router-dom'
-import { ZoomIn, ZoomOut, Eye, EyeOff, ChevronLeft, ChevronRight, RotateCcw, RotateCw, Printer, Download, AlignHorizontalJustifyCenter, AlignVerticalJustifyCenter, Search, X, ArrowUp, ArrowDown, ArrowLeft } from 'lucide-react'
+import { ZoomIn, ZoomOut, Eye, EyeOff, ChevronLeft, ChevronRight, RotateCcw, RotateCw, Printer, Download, AlignHorizontalJustifyCenter, AlignVerticalJustifyCenter, Search, X, ArrowUp, ArrowDown, FileText, ChevronDown, ChevronUp as ChevronUpIcon } from 'lucide-react'
 import { Document, Page, pdfjs } from 'react-pdf/dist/index.js'
 import workerSrc from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import 'react-pdf/dist/Page/TextLayer.css'
 import 'react-pdf/dist/Page/AnnotationLayer.css'
+
+type RelatedLaw = {
+  id: number
+  title: string
+  gazette_key?: string | null
+  gazette_date?: string | null
+}
 
 type Law = {
   id: number
@@ -12,6 +19,8 @@ type Law = {
   path_pdf: string
   gazette_key?: string | null
   gazette_date?: string | null
+  group_id?: number | null
+  related_laws?: RelatedLaw[]
 }
 type Segment = {
   id: number
@@ -35,6 +44,7 @@ export default function LawViewer() {
   const [numPages, setNumPages] = useState<number | null>(null)
   const [scale, setScale] = useState(1)
   const [showHighlights, setShowHighlights] = useState(true)
+  const [showRelated, setShowRelated] = useState(true)
   const [rotate, setRotate] = useState(0)
   const [fitMode, setFitMode] = useState<'custom' | 'width' | 'height'>('custom')
   const viewerRef = useRef<HTMLDivElement | null>(null)
@@ -152,7 +162,7 @@ export default function LawViewer() {
     const qSrc = (query || '').trim()
     const qTokens = qSrc.split(/\s+/).filter((t) => t.length >= 3)
     const sSrc = pdfSearch.trim()
-    
+
     // Ako korisnik traži unutar PDF-a, koristimo ISKLJUČIVO uneseni izraz kao frazu.
     // Ovo sprječava da se za "član 4" označe sva pojavljivanja riječi "član" i broja "4" odvojeno.
     const activeTokens = sSrc ? [sSrc] : qTokens
@@ -229,24 +239,26 @@ export default function LawViewer() {
 
   // Helper: Robustly find text in the text layer (handles split spans, formatting)
   const findTextInLayer = (layer: HTMLElement, searchText: string, isArticleSearch = false): HTMLElement | null => {
-    const spans = Array.from(layer.querySelectorAll('span')) as HTMLElement[]
+    const spans = Array.from(layer.querySelectorAll('span, div')) as HTMLElement[]
     if (spans.length === 0) return null
 
     let fullText = ''
     const spanMap: { start: number; el: HTMLElement }[] = []
 
-    // Normalize: NFD decomposition, strip marks, toLowerCase, handle non-breaking space
-    const normalize = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\u00A0/g, ' ')
+    // Normalize: NFD decomposition, strip marks, toLowerCase, handle non-breaking space and collapsible whitespace
+    const normalize = (s: string) =>
+      s.normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .replace(/[\u00A0\r\n\t]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
 
     for (const span of spans) {
-      const txt = normalize(span.textContent || '')
-      // Add space to separate spans so "end" of one and "start" of next don't merge inappropriately
-      // BUT for strict phrase matching, extra spaces might hurt if the PDF doesn't have them.
-      // However, PDF text layer spans usually break on spaces or formatting changes.
-      // We'll add a space only if the span text doesn't end with one? 
-      // Safer: Always add space and normalize the search query to allow spaces?
-      // Let's stick to the previous robust logic: add space.
-      if (!txt.trim()) continue
+      const content = span.textContent || ''
+      const txt = normalize(content)
+      if (!txt) continue
+
       spanMap.push({ start: fullText.length, el: span })
       fullText += txt + ' '
     }
@@ -258,9 +270,13 @@ export default function LawViewer() {
       // Specific logic for Article Numbers (e.g. "Clan 34")
       const num = parseInt(searchText, 10)
       if (Number.isNaN(num)) return null
-      
+
       // Priority 1: Prefix + Number
-      const regexPrefix = new RegExp(`(?:clan|clanak|cl|član|članak|čl|члан|чланак|чл)\\W{0,15}${num}(?!\\d)`, 'i')
+      // Using a more robust regex that ignores extra junk and handles diacritics better
+      // Permissive ending: dot, boundary, or end of string
+      // Also allow optional spaces inside words (e.g. "C lan") to match server-side parsing logic
+      // Updated to be even more permissive with splitting and characters
+      const regexPrefix = new RegExp(`(?:c|č|ч)\\s*(?:l|л)\\s*(?:a|а)\\s*(?:n|н)(?:ak|ак)?(?:\\.|\\s)*\\W{0,30}${num}(?:\\..{0,10}|\\b|$)`, 'i')
       const m1 = regexPrefix.exec(fullText)
       if (m1) {
         matchIndex = m1.index
@@ -312,7 +328,7 @@ export default function LawViewer() {
 
     let attempts = 0
     const maxAttempts = 30 // ~6 seconds
-    
+
     const attemptScroll = () => {
       const container = viewerRef.current
       if (!container) return
@@ -344,24 +360,34 @@ export default function LawViewer() {
       if (targetArticleNum) {
         targetEl = findTextInLayer(layer, String(targetArticleNum), true)
       }
-      
+
       // 2. Try finding by Search Term (if no article target or article not found)
       if (!targetEl && pdfSearch.trim()) {
         // First try standard highlights
         targetEl = layer.querySelector('span.pdf-hl') as HTMLElement | null
         // If not found (e.g. split spans), try robust text search
         if (!targetEl) {
-           targetEl = findTextInLayer(layer, pdfSearch)
+          targetEl = findTextInLayer(layer, pdfSearch)
         }
       }
 
       // 3. Fallback for Article: try existing highlights if robust search failed
       if (!targetEl && targetArticleNum) {
-         targetEl = layer.querySelector('span.pdf-hl') as HTMLElement | null
+        targetEl = layer.querySelector('span.pdf-hl') as HTMLElement | null
       }
 
       if (targetEl) {
-        scrollToTarget(container, targetEl)
+        // Double check if targetEl is a span and if we can find a pdf-hl inside it (better accuracy)
+        const hl = targetEl.querySelector('.pdf-hl') as HTMLElement | null
+        const finalTarget = hl || targetEl
+
+        const container = viewerRef.current
+        if (container) {
+          const cRect = container.getBoundingClientRect()
+          const tRect = finalTarget.getBoundingClientRect()
+          const scrollNeeded = (tRect.top - cRect.top) + container.scrollTop - (cRect.height / 2) + (tRect.height / 2)
+          container.scrollTo({ top: scrollNeeded, behavior: 'smooth' })
+        }
       } else {
         // Target not found on this page despite text layer being ready.
         // Fallback: Scroll to the top of the page so the user at least lands on the correct page.
@@ -375,15 +401,6 @@ export default function LawViewer() {
   }, [page, targetArticleNum, pdfSearch, highlightTerms]) // Re-run when these change
 
 
-
-  // Helper: Scroll container to center the target element
-  const scrollToTarget = (container: HTMLElement, target: HTMLElement) => {
-    const tRect = target.getBoundingClientRect()
-    const cRect = container.getBoundingClientRect()
-    const offset = (tRect.top - cRect.top) + container.scrollTop
-    const centeredTop = Math.max(0, offset - (container.clientHeight / 2) + (tRect.height / 2))
-    container.scrollTo({ top: centeredTop, behavior: 'smooth' })
-  }
 
   // Pomoćne funkcije za skokove po highlightima (lokalna pretraga)
   const getHighlights = () => {
@@ -409,15 +426,15 @@ export default function LawViewer() {
         if (container) {
           const layers = Array.from(container.querySelectorAll('.textLayer')) as HTMLElement[]
           for (const layer of layers) {
-             const found = findTextInLayer(layer, pdfSearch)
-             if (found) {
-               target = found
-               // Note: We can't easily count total matches for robust search without scanning everything,
-               // so we just set 1/1 to indicate "found something".
-               setSearchTotal(1)
-               setSearchIdx(1)
-               break
-             }
+            const found = findTextInLayer(layer, pdfSearch)
+            if (found) {
+              target = found
+              // Note: We can't easily count total matches for robust search without scanning everything,
+              // so we just set 1/1 to indicate "found something".
+              setSearchTotal(1)
+              setSearchIdx(1)
+              break
+            }
           }
         }
       }
@@ -425,7 +442,7 @@ export default function LawViewer() {
       if (target) {
         const container = viewerRef.current
         if (container) {
-          scrollToTarget(container, target)
+          target.scrollIntoView({ behavior: 'smooth', block: 'center' })
         }
         const pageEl = target.closest('[id^="page-"]') as HTMLElement | null
         if (pageEl?.id) {
@@ -452,7 +469,7 @@ export default function LawViewer() {
     setSearchIdx(nextIdx)
     const container = viewerRef.current
     if (container) {
-      scrollToTarget(container, target)
+      target.scrollIntoView({ behavior: 'smooth', block: 'center' })
     }
     const pageEl = target.closest('[id^="page-"]') as HTMLElement | null
     if (pageEl?.id) {
@@ -488,16 +505,7 @@ export default function LawViewer() {
 
   return (
     <div className="space-y-4">
-      {/* Povratno dugme */}
-      <div className="mb-4">
-        <button
-          onClick={() => window.history.back()}
-          className="inline-flex items-center gap-2 px-4 py-2 bg-white border border-slate-300 rounded-md text-sm font-medium text-slate-700 hover:bg-slate-50 hover:text-slate-900 transition-colors shadow-sm"
-        >
-          <ArrowLeft size={16} />
-          Povratak na rezultate
-        </button>
-      </div>
+
 
       {/* Conditional content to maintain consistent hook order */}
       {loading && (
@@ -530,6 +538,69 @@ export default function LawViewer() {
                     }
                     return [num, dateStr].filter(Boolean).join(' • ')
                   })(law.gazette_key ?? null, law.gazette_date ?? null)}
+                </div>
+              )}
+
+              {/* Related Laws Section */}
+              {law.related_laws && law.related_laws.length > 1 && (
+                <div className="mt-4">
+                  <button
+                    onClick={() => setShowRelated((v) => !v)}
+                    className="flex items-center gap-2 text-sm font-medium text-legalistik-teal hover:text-legalistik-tealDark transition-colors"
+                  >
+                    <FileText size={16} />
+                    Povezani propisi ({law.related_laws.length})
+                    {showRelated ? <ChevronUpIcon size={16} /> : <ChevronDown size={16} />}
+                  </button>
+                  {showRelated && (
+                    <div className="mt-2 p-3 bg-slate-50 rounded-lg border border-slate-200">
+                      <ul className="space-y-2">
+                        {law.related_laws.map((rel, idx) => {
+                          const isCurrent = rel.id === law.id
+                          const isBase = idx === 0
+                          const gazetteNum = rel.gazette_key ? rel.gazette_key.replace('_', '/') : null
+
+                          let dateStr: string | null = null
+                          if (rel.gazette_date) {
+                            const dt = new Date(rel.gazette_date)
+                            if (!Number.isNaN(dt.getTime())) {
+                              const dd = String(dt.getDate()).padStart(2, '0')
+                              const mm = String(dt.getMonth() + 1).padStart(2, '0')
+                              const yyyy = dt.getFullYear()
+                              dateStr = `${dd}.${mm}.${yyyy}.`
+                            } else {
+                              dateStr = rel.gazette_date
+                            }
+                          }
+
+                          const infoStr = [gazetteNum, dateStr].filter(Boolean).join(' • ')
+
+                          return (
+                            <li key={rel.id} className="flex items-start gap-2">
+                              <span className={`mt-1 w-2 h-2 rounded-full flex-shrink-0 ${isCurrent ? 'bg-legalistik-teal' : 'bg-slate-300'}`} />
+                              {isCurrent ? (
+                                <span className="text-sm font-medium text-slate-800">
+                                  {rel.title}
+                                  {infoStr && <span className="text-slate-500 font-normal"> ({infoStr})</span>}
+                                  {isBase && <span className="ml-2 text-xs bg-legalistik-teal text-white px-1.5 py-0.5 rounded">Osnovni</span>}
+                                  <span className="ml-2 text-xs text-legalistik-teal">← Trenutni</span>
+                                </span>
+                              ) : (
+                                <a
+                                  href={`/viewer/${rel.id}`}
+                                  className="text-sm text-slate-700 hover:text-legalistik-teal hover:underline transition-colors"
+                                >
+                                  {rel.title}
+                                  {infoStr && <span className="text-slate-500"> ({infoStr})</span>}
+                                  {isBase && <span className="ml-2 text-xs bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded">Osnovni</span>}
+                                </a>
+                              )}
+                            </li>
+                          )
+                        })}
+                      </ul>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

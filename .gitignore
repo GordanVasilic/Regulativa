@@ -12,3 +12,9 @@ apps/api/.env
 **/dumps/
 **/tmp/
 *.log
+*.db
+*.sqlite
+*.key
+*.pub
+Dokumenti.tar.gz
+Scrape/

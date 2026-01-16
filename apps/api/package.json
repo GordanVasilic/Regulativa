@@ -21,12 +21,14 @@
     "compare:sgtxt-vs-nsrs-preuzmi": "node --import tsx scripts/count_preuzmi_for_sgtxt_vs_nsrs.ts",
     "import:brcko": "node --import tsx scripts/import_brcko_from_xlsx.ts",
     "import:montenegro": "node --import tsx scripts/import_montenegro_from_xlsx.ts",
+    "sync:prod": "node --import tsx scripts/sync_prod_to_local.ts",
     "segments:montenegro": "JURISDICTION='Crna Gora' LIMIT=50 node --import tsx scripts/extract_segments_rs.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js"
   },
   "dependencies": {
     "adm-zip": "^0.5.16",
+    "check-disk-space": "^3.4.0",
     "cheerio": "^1.1.2",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
@@ -42,6 +44,7 @@
     "pdfjs-dist": "^5.4.394",
     "puppeteer": "^22.15.0",
     "sqlite3": "^5.1.7",
+    "ssh2-sftp-client": "^12.0.1",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {

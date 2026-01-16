@@ -2,8 +2,11 @@ import { Routes, Route } from 'react-router-dom'
 import LawViewer from './LawViewer'
 import SearchPage from './SearchPage'
 import HomePage from './HomePage'
+import AdminDashboard from './AdminDashboard'
 import AdminAddLaw from './AdminAddLaw'
-import AdminLawsList from './AdminLawsList'
+import AdminSync from './AdminSync'
+import AdminSettings from './AdminSettings'
+import Navbar from './components/Navbar'
 
 export default function App() {
 
@@ -15,12 +18,17 @@ export default function App() {
         <div className="absolute top-0 right-0 w-[800px] h-[600px] bg-indigo-100/40 rounded-full blur-3xl opacity-50 mix-blend-multiply" />
       </div>
 
+      <Navbar />
       <div className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <Routes>
           <Route path="/" element={<HomePage />} />
           <Route path="/search" element={<SearchPage />} />
           <Route path="/viewer/:id" element={<LawViewer />} />
-          <Route path="/admin/laws" element={<AdminLawsList />} />
+
+          {/* Admin Routes */}
+          <Route path="/admin" element={<AdminDashboard />} />
+          <Route path="/admin/sync" element={<AdminSync />} />
+          <Route path="/admin/settings" element={<AdminSettings />} />
           <Route path="/admin/laws/new" element={<AdminAddLaw />} />
           <Route path="/admin/laws/:id/edit" element={<AdminAddLaw />} />
         </Routes>

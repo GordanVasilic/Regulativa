@@ -1,0 +1,26 @@
+[
+  {
+    "id": 245,
+    "title": "Zakon o izmjenama i dopunama Porodičnog zakona",
+    "gazette_key": "27_24",
+    "jurisdiction": "RS"
+  },
+  {
+    "id": 353,
+    "title": "Zakon o izmjenama i dopunama Zakona o parničnom postupku",
+    "gazette_key": "27_24",
+    "jurisdiction": "RS"
+  },
+  {
+    "id": 449,
+    "title": "Zakon o izmjenama i dopunama Zakona o vanparničnom postupku",
+    "gazette_key": "27_24",
+    "jurisdiction": "RS"
+  },
+  {
+    "id": 719,
+    "title": "Zakon o očuvanju kulturnog i istorijskog nasljeđa svetog manastira Hilandar",
+    "gazette_key": "27_24",
+    "jurisdiction": "RS"
+  }
+]

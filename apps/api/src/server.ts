@@ -11,6 +11,8 @@ import { MeiliSearch } from 'meilisearch'
 import mammoth from 'mammoth'
 import { pdfService } from './services/pdf.service.js'
 import { parseSegments, parseSegmentsFromPdf, normalizeTitle } from './services/law-parsing.service.js'
+import { groupingService } from './services/grouping.service.js'
+import { scraperService } from './services/scraper.service.js'
 
 const PORT = process.env.PORT ? Number(process.env.PORT) : 5000
 const ROOT = path.resolve(process.cwd())
@@ -87,15 +89,15 @@ try {
   // ignore if exists
 }
 try {
-    await run(db, 'ALTER TABLE laws ADD COLUMN last_opened TEXT')
-  } catch (e) {
-    // ignore if exists
-  }
-  try {
-    await run(db, 'ALTER TABLE laws ADD COLUMN text_content TEXT')
-  } catch (e) {
-    // ignore if exists
-  }
+  await run(db, 'ALTER TABLE laws ADD COLUMN last_opened TEXT')
+} catch (e) {
+  // ignore if exists
+}
+try {
+  await run(db, 'ALTER TABLE laws ADD COLUMN text_content TEXT')
+} catch (e) {
+  // ignore if exists
+}
 
 await run(
   db,
@@ -129,12 +131,52 @@ await run(
   )`
 )
 
+// Law groups for linking related laws (base law + amendments)
+await run(
+  db,
+  `CREATE TABLE IF NOT EXISTS law_groups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    jurisdiction TEXT NOT NULL,
+    base_law_id INTEGER,
+    name TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (base_law_id) REFERENCES laws(id)
+  )`
+)
+
+// Scraper configurations for auto-sync
+await run(
+  db,
+  `CREATE TABLE IF NOT EXISTS scraper_configs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    jurisdiction TEXT NOT NULL UNIQUE,
+    url TEXT NOT NULL,
+    selector_config TEXT, -- JSON with selectors if needed
+    last_check TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+  )`
+)
+
+// Initialize RS config if missing
+const rsConfig = await get(db, "SELECT id FROM scraper_configs WHERE jurisdiction = 'RS'")
+if (!rsConfig) {
+  await run(db, "INSERT INTO scraper_configs (jurisdiction, url) VALUES ('RS', 'https://narodnaskupstinars.net/la/akti/usvojeni-zakoni')")
+}
+
+// Ensure group_id column exists in laws table
+try {
+  await run(db, 'ALTER TABLE laws ADD COLUMN group_id INTEGER REFERENCES law_groups(id)')
+} catch (e) {
+  // ignore if exists
+}
+
 // MeiliSearch setup (optional)
 let meili: MeiliSearch | null = null
 try {
   if (process.env.MEILI_HOST) {
-    meili = new MeiliSearch({ 
-      host: process.env.MEILI_HOST!, 
+    meili = new MeiliSearch({
+      host: process.env.MEILI_HOST!,
       apiKey: process.env.MEILI_KEY,
       timeout: 10000 // 10s timeout to avoid "Request Timeout" on low-RAM server
     })
@@ -248,7 +290,7 @@ app.get('/laws', async (req, res) => {
         id DESC
       `
     }
-    
+
     const whereParts: string[] = []
     const params: any[] = []
 
@@ -263,8 +305,30 @@ app.get('/laws', async (req, res) => {
       params.push(`%${q}%`, `%${q}%`)
     }
 
+    // Advanced filters
+    if (req.query.id) {
+      whereParts.push('id = ?')
+      params.push(Number(req.query.id))
+    }
+    if (req.query.gazette_key) {
+      whereParts.push('gazette_key LIKE ?')
+      params.push(`%${req.query.gazette_key}%`)
+    }
+    if (req.query.date_from) {
+      whereParts.push('gazette_date >= ?')
+      params.push(String(req.query.date_from))
+    }
+    if (req.query.date_to) {
+      whereParts.push('gazette_date <= ?')
+      params.push(String(req.query.date_to))
+    }
+    if (req.query.title) {
+      whereParts.push('title LIKE ?')
+      params.push(`%${req.query.title}%`)
+    }
+
     const where = whereParts.length > 0 ? `WHERE ${whereParts.join(' AND ')}` : ''
-    
+
     // Total count for pagination
     let total = 0
     if (format === 'paged') {
@@ -406,32 +470,69 @@ app.get('/api/laws/:id', async (req, res) => {
     const id = Number(req.params.id)
     const law = await get(db, 'SELECT * FROM laws WHERE id = ?', [id])
     if (!law) return res.status(404).json({ error: 'Not found' })
-    
+
     // If text_content is missing, reconstruct from segments
     if (!law.text_content) {
-        const segments = await all(db, 'SELECT label, text FROM segments WHERE law_id = ? ORDER BY id ASC', [id])
-        if (segments.length > 0) {
-            // Reconstruct text: join segment texts.
-            // Note: Parser stores full text in segment.text, including label if regex matched.
-            // But let's check if we need to add label explicitly?
-            // Usually segment.text is the full article content.
-            // If label is "Član 1", text is "Član 1\nTekst...".
-            // So joining by newlines is enough.
-            law.text_content = segments.map(s => s.text).join('\n\n')
-        }
+      const segments = await all(db, 'SELECT label, text FROM segments WHERE law_id = ? ORDER BY id ASC', [id])
+      if (segments.length > 0) {
+        // Reconstruct text: join segment texts.
+        // Note: Parser stores full text in segment.text, including label if regex matched.
+        // But let's check if we need to add label explicitly?
+        // Usually segment.text is the full article content.
+        // If label is "Član 1", text is "Član 1\nTekst...".
+        // So joining by newlines is enough.
+        law.text_content = segments.map(s => s.text).join('\n\n')
+      }
     }
-    
-    res.json(law)
+
+    // Fetch related laws from same group (if any)
+    let relatedLaws: any[] = []
+    if (law.group_id) {
+      relatedLaws = await all(
+        db,
+        `SELECT id, title, gazette_key, gazette_date 
+         FROM laws 
+         WHERE group_id = ? 
+         ORDER BY gazette_date ASC, id ASC`,
+        [law.group_id]
+      )
+    }
+
+    res.json({ ...law, related_laws: relatedLaws })
   } catch (e) {
     res.status(500).json({ error: String(e) })
   }
 })
 
+// /laws/:id route - mirrors /api/laws/:id for Vite proxy compatibility
 app.get('/laws/:id', async (req, res) => {
   try {
-    const law = await get(db, 'SELECT * FROM laws WHERE id = ?', [req.params.id])
+    const id = Number(req.params.id)
+    const law = await get(db, 'SELECT * FROM laws WHERE id = ?', [id])
     if (!law) return res.status(404).json({ error: 'Not found' })
-    res.json(law)
+
+    // If text_content is missing, reconstruct from segments
+    if (!law.text_content) {
+      const segments = await all(db, 'SELECT label, text FROM segments WHERE law_id = ? ORDER BY id ASC', [id])
+      if (segments.length > 0) {
+        law.text_content = segments.map((s: any) => s.text).join('\n\n')
+      }
+    }
+
+    // Fetch related laws from same group (if any)
+    let relatedLaws: any[] = []
+    if (law.group_id) {
+      relatedLaws = await all(
+        db,
+        `SELECT id, title, gazette_key, gazette_date 
+         FROM laws 
+         WHERE group_id = ? 
+         ORDER BY gazette_date ASC, id ASC`,
+        [law.group_id]
+      )
+    }
+
+    res.json({ ...law, related_laws: relatedLaws })
   } catch (e) {
     res.status(500).json({ error: String(e) })
   }
@@ -699,7 +800,7 @@ app.post('/upload', upload.single('file'), async (req, res) => {
 // Admin: Add new law manually
 app.post('/api/admin/laws', async (req, res) => {
   try {
-    const { title, jurisdiction, date, gazette_key, text } = req.body
+    const { title, jurisdiction, date, gazette_key, text, group_id } = req.body
     if (!title || !jurisdiction || !text) {
       return res.status(400).json({ error: 'Missing required fields' })
     }
@@ -711,17 +812,17 @@ app.post('/api/admin/laws', async (req, res) => {
     const title_normalized = normalizeTitle(title)
     await run(
       db,
-      `INSERT INTO laws (jurisdiction, title, title_normalized, gazette_key, gazette_date, path_pdf, text_content, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
-      [jurisdiction, title, title_normalized, gazette_key || null, date || null, path_pdf, text]
+      `INSERT INTO laws (jurisdiction, title, title_normalized, gazette_key, gazette_date, path_pdf, text_content, group_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+      [jurisdiction, title, title_normalized, gazette_key || null, date || null, path_pdf, text, group_id || null]
     )
-    
+
     const law = await get(db, 'SELECT id, title, jurisdiction, gazette_key, title_normalized FROM laws WHERE path_pdf = ? ORDER BY id DESC LIMIT 1', [path_pdf])
     if (!law) throw new Error('Failed to retrieve inserted law')
 
     // 3. Parse Segments (from generated PDF to get correct page hints)
     const segments = await parseSegmentsFromPdf(path_pdf)
-    
+
     // 4. Insert Segments
     for (const s of segments) {
       await run(
@@ -779,7 +880,7 @@ app.delete('/api/admin/laws/:id', async (req, res) => {
     if (meili) {
       try {
         await meili.index('laws').deleteDocument(id)
-        
+
         // Get segment IDs to delete from Meili
         const segments = await all(db, 'SELECT id FROM segments WHERE law_id = ?', [id])
         const segmentIds = segments.map(s => s.id)
@@ -796,7 +897,7 @@ app.delete('/api/admin/laws/:id', async (req, res) => {
       const absPath = path.resolve(law.path_pdf) // law.path_pdf is likely absolute or relative to root
       // Check if it's absolute
       const finalPath = path.isAbsolute(law.path_pdf) ? law.path_pdf : path.resolve(process.cwd(), law.path_pdf)
-      
+
       try {
         if (await fs.pathExists(finalPath)) {
           await fs.remove(finalPath)
@@ -822,8 +923,8 @@ app.delete('/api/admin/laws/:id', async (req, res) => {
 app.put('/api/admin/laws/:id', async (req, res) => {
   try {
     const id = Number(req.params.id)
-    const { title, jurisdiction, date, gazette_key, text } = req.body
-    
+    const { title, jurisdiction, date, gazette_key, text, group_id, link_to_law_id } = req.body
+
     if (!title || !jurisdiction) {
       return res.status(400).json({ error: 'Missing required fields' })
     }
@@ -831,111 +932,650 @@ app.put('/api/admin/laws/:id', async (req, res) => {
     const existing = await get(db, 'SELECT * FROM laws WHERE id = ?', [id])
     if (!existing) return res.status(404).json({ error: 'Law not found' })
 
+    // Handle "Link to Law" logic
+    let finalGroupId = group_id
+    if (link_to_law_id) {
+        // Create new group based on target law
+        const targetLaw = await get(db, 'SELECT id, title, jurisdiction FROM laws WHERE id = ?', [link_to_law_id])
+        if (targetLaw) {
+            // Check if target already has group (race condition check)
+            const checkGroup = await get(db, 'SELECT group_id FROM laws WHERE id = ?', [link_to_law_id])
+            if (checkGroup && checkGroup.group_id) {
+                finalGroupId = checkGroup.group_id
+            } else {
+                // Create new group
+                await run(
+                    db,
+                    'INSERT INTO law_groups (jurisdiction, name, base_law_id) VALUES (?, ?, ?)',
+                    [targetLaw.jurisdiction, targetLaw.title, targetLaw.id]
+                )
+                const newGroup = await get(db, 'SELECT id FROM law_groups ORDER BY id DESC LIMIT 1')
+                if (newGroup) {
+                    finalGroupId = newGroup.id
+                    // Assign target law to this new group
+                    await run(db, 'UPDATE laws SET group_id = ? WHERE id = ?', [finalGroupId, targetLaw.id])
+                }
+            }
+        }
+    }
+
     // 1. Update Metadata
     const title_normalized = normalizeTitle(title)
     await run(
       db,
       `UPDATE laws 
-       SET title = ?, jurisdiction = ?, gazette_key = ?, gazette_date = ?, title_normalized = ?, updated_at = datetime('now')
+       SET title = ?, jurisdiction = ?, gazette_key = ?, gazette_date = ?, title_normalized = ?, group_id = ?, updated_at = datetime('now')
        WHERE id = ?`,
-      [title, jurisdiction, gazette_key || null, date || null, title_normalized, id]
+      [title, jurisdiction, gazette_key || null, date || null, title_normalized, finalGroupId || null, id]
     )
 
     // 2. Handle Text Update (if provided and different)
     // Note: If text is provided, we regenerate PDF and segments.
     // If text is NOT provided (e.g. metadata only edit), we skip this.
     // Ideally frontend should send text if it wants to edit it.
-    
+
     if (text) {
-        // Save raw text if we support it (adding column if missing)
+      // Save raw text if we support it (adding column if missing)
+      try {
+        await run(db, 'UPDATE laws SET text_content = ? WHERE id = ?', [text, id])
+      } catch (e) {
+        // Column might not exist, ignore or migrate
+      }
+
+      // Regenerate PDF
+      // Remove old PDF if path changes? Path is derived from title + gazette.
+      // If title changed, we might want to delete old file.
+      // For simplicity, generate new PDF and update path.
+      // Old PDF might remain as orphan if we don't delete it.
+      if (existing.path_pdf) {
         try {
-            await run(db, 'UPDATE laws SET text_content = ? WHERE id = ?', [text, id])
+          const oldPath = path.resolve(existing.path_pdf)
+          if (await fs.pathExists(oldPath)) await fs.remove(oldPath)
+        } catch { }
+      }
+
+      const path_pdf = await pdfService.generatePdf(title, text, jurisdiction, gazette_key)
+      await run(db, 'UPDATE laws SET path_pdf = ? WHERE id = ?', [path_pdf, id])
+
+      // Re-parse Segments
+      // 1. Fetch old segment IDs to delete from Meili
+      const oldSegments = await all(db, 'SELECT id FROM segments WHERE law_id = ?', [id])
+      const oldSegmentIds = oldSegments.map(s => s.id)
+
+      // 2. Delete from Meili (if exists)
+      if (meili && oldSegmentIds.length > 0) {
+        try {
+          await meili.index('segments').deleteDocuments(oldSegmentIds)
         } catch (e) {
-            // Column might not exist, ignore or migrate
+          console.warn('Failed to delete old segments from Meili:', e)
         }
+      }
 
-        // Regenerate PDF
-        // Remove old PDF if path changes? Path is derived from title + gazette.
-        // If title changed, we might want to delete old file.
-        // For simplicity, generate new PDF and update path.
-        // Old PDF might remain as orphan if we don't delete it.
-        if (existing.path_pdf) {
-            try {
-                const oldPath = path.resolve(existing.path_pdf)
-                if (await fs.pathExists(oldPath)) await fs.remove(oldPath)
-            } catch {}
+      // 3. Delete old segments from SQLite
+      await run(db, 'DELETE FROM segments WHERE law_id = ?', [id])
+
+      // Parse new
+      const segments = await parseSegmentsFromPdf(path_pdf)
+      for (const s of segments) {
+        await run(
+          db,
+          'INSERT INTO segments (law_id, segment_type, label, number, text, page_hint) VALUES (?, ?, ?, ?, ?, ?)',
+          [id, 'article', s.label, s.number, s.text, s.page_hint]
+        )
+      }
+
+      // Update MeiliSearch Segments
+      if (meili) {
+        try {
+          // Index new segments
+          const insertedSegments = await all(db, 'SELECT id, label, number, text FROM segments WHERE law_id = ?', [id])
+          const meiliDocs = insertedSegments.map(s => ({
+            id: s.id,
+            law_id: id,
+            label: s.label,
+            number: s.number,
+            text: s.text,
+            law_title: title,
+            jurisdiction: jurisdiction,
+            gazette_key: gazette_key
+          }))
+          await meili.index('segments').addDocuments(meiliDocs)
+        } catch (e) {
+          console.warn('Meili re-indexing failed:', e)
         }
-
-        const path_pdf = await pdfService.generatePdf(title, text, jurisdiction, gazette_key)
-        await run(db, 'UPDATE laws SET path_pdf = ? WHERE id = ?', [path_pdf, id])
-
-        // Re-parse Segments
-        // 1. Fetch old segment IDs to delete from Meili
-        const oldSegments = await all(db, 'SELECT id FROM segments WHERE law_id = ?', [id])
-        const oldSegmentIds = oldSegments.map(s => s.id)
-
-        // 2. Delete from Meili (if exists)
-        if (meili && oldSegmentIds.length > 0) {
-            try {
-                await meili.index('segments').deleteDocuments(oldSegmentIds)
-            } catch (e) {
-                console.warn('Failed to delete old segments from Meili:', e)
-            }
-        }
-
-        // 3. Delete old segments from SQLite
-        await run(db, 'DELETE FROM segments WHERE law_id = ?', [id])
-
-        // Parse new
-        const segments = await parseSegmentsFromPdf(path_pdf)
-        for (const s of segments) {
-            await run(
-                db,
-                'INSERT INTO segments (law_id, segment_type, label, number, text, page_hint) VALUES (?, ?, ?, ?, ?, ?)',
-                [id, 'article', s.label, s.number, s.text, s.page_hint]
-            )
-        }
-
-        // Update MeiliSearch Segments
-        if (meili) {
-            try {
-                // Index new segments
-                const insertedSegments = await all(db, 'SELECT id, label, number, text FROM segments WHERE law_id = ?', [id])
-                const meiliDocs = insertedSegments.map(s => ({
-                    id: s.id,
-                    law_id: id,
-                    label: s.label,
-                    number: s.number,
-                    text: s.text,
-                    law_title: title,
-                    jurisdiction: jurisdiction,
-                    gazette_key: gazette_key
-                }))
-                await meili.index('segments').addDocuments(meiliDocs)
-            } catch (e) {
-                console.warn('Meili re-indexing failed:', e)
-            }
-        }
+      }
     }
 
     // Update MeiliSearch Law Metadata
     if (meili) {
-        try {
-            await meili.index('laws').addDocuments([{
-                id: id,
-                title: title,
-                jurisdiction: jurisdiction,
-                gazette_key: gazette_key,
-                title_normalized: title_normalized
-            }])
-        } catch (e) {
-             console.warn('Meili law update failed:', e)
-        }
+      try {
+        await meili.index('laws').addDocuments([{
+          id: id,
+          title: title,
+          jurisdiction: jurisdiction,
+          gazette_key: gazette_key,
+          title_normalized: title_normalized
+        }])
+      } catch (e) {
+        console.warn('Meili law update failed:', e)
+      }
     }
 
     res.json({ ok: true })
   } catch (e) {
     console.error(e)
+    res.status(500).json({ error: String(e) })
+  }
+})
+
+import checkDiskSpace from 'check-disk-space'
+import os from 'os'
+import { spawn } from 'child_process'
+
+// ... existing imports ...
+
+// --- ADMIN ROUTES ---
+
+// 1. System Stats
+app.get('/api/admin/stats/system', async (_req, res) => {
+  try {
+    // RAM
+    const totalMem = os.totalmem()
+    const freeMem = os.freemem()
+    const usedMem = totalMem - freeMem
+
+    // Disk (root)
+    // On Windows use 'C:', on Linux '/'
+    const diskPath = process.platform === 'win32' ? 'C:' : '/'
+    const disk = await checkDiskSpace(diskPath)
+
+    res.json({
+      ram: {
+        total: totalMem,
+        used: usedMem,
+        free: freeMem,
+        percent: Math.round((usedMem / totalMem) * 100)
+      },
+      disk: {
+        total: disk.size,
+        used: disk.size - disk.free,
+        free: disk.free,
+        percent: Math.round(((disk.size - disk.free) / disk.size) * 100)
+      },
+      uptime: os.uptime(),
+      load: os.loadavg() // [1, 5, 15] min
+    })
+  } catch (e) {
+    res.status(500).json({ error: String(e) })
+  }
+})
+
+// 2. Meili Stats
+app.get('/api/admin/stats/meili', async (_req, res) => {
+  try {
+    // DB Count
+    const dbRes = await get(db, 'SELECT COUNT(*) as cnt FROM laws')
+    const dbCount = dbRes?.cnt || 0
+
+    // Meili Count
+    let meiliCount = 0
+    let meiliStatus = 'unknown'
+
+    if (meili) {
+      try {
+        const stats = await meili.index('laws').getStats()
+        meiliCount = stats.numberOfDocuments
+        meiliStatus = 'running'
+      } catch (e) {
+        meiliStatus = 'error'
+      }
+    } else {
+      meiliStatus = 'disabled'
+    }
+
+    res.json({
+      db_count: dbCount,
+      meili_count: meiliCount,
+      status: meiliStatus,
+      sync_health: dbCount === meiliCount ? 'ok' : 'mismatch'
+    })
+  } catch (e) {
+    res.status(500).json({ error: String(e) })
+  }
+})
+
+// 3. Trigger Actions (Reindex)
+app.post('/api/admin/actions/reindex', async (req, res) => {
+  const { type } = req.body // 'full' or 'missing' (todo)
+
+  if (type === 'full') {
+    // Spawn background process
+    console.log('Admin triggered full reindex...')
+
+    // Using existing script: scripts/index_laws_meili.ts (or reindex_all_safe.ts)
+    // Let's use reindex_all_safe.ts if available, or fallback to npm run reindex:laws
+
+    const script = path.resolve(process.cwd(), 'scripts', 'reindex_all_safe.ts')
+    // Check if safe script exists, otherwise standard
+    const cmd = fs.existsSync(script) ? script : path.resolve(process.cwd(), 'scripts', 'index_laws_meili.ts')
+
+    // Run detached
+    const child = spawn('node', ['--import', 'tsx', cmd], {
+      detached: true,
+      stdio: 'ignore'
+    })
+    child.unref()
+
+    return res.json({ ok: true, message: 'Reindex started in background' })
+  }
+
+  res.status(400).json({ error: 'Unknown action type' })
+})
+
+// 4. Start MeiliSearch
+app.post('/api/admin/actions/start-meili', async (_req, res) => {
+  try {
+    const host = process.env.MEILI_HOST
+    const apiKey = process.env.MEILI_KEY
+
+    if (!host) {
+      return res.status(400).json({ error: 'MEILI_HOST is not configured' })
+    }
+
+    try {
+      const client = new MeiliSearch({ host, apiKey, timeout: 5000 })
+      await client.getIndexes()
+      return res.json({ ok: true, message: 'MeiliSearch is already running' })
+    } catch { }
+
+    if (process.platform === 'win32') {
+      const script = path.resolve(process.cwd(), '..', '..', 'tools', 'meili', 'start-meili.ps1')
+      const child = spawn('powershell', ['-ExecutionPolicy', 'Bypass', '-File', script], {
+        detached: true,
+        stdio: 'ignore'
+      })
+      child.unref()
+    } else {
+      const child = spawn('pm2', ['start', 'meili-search', '--update-env'], {
+        detached: true,
+        stdio: 'ignore'
+      })
+      child.unref()
+    }
+
+    res.json({ ok: true, message: 'MeiliSearch start triggered in background' })
+  } catch (e) {
+    res.status(500).json({ error: String(e) })
+  }
+})
+
+// 5. Sync Status & Action
+app.get('/api/admin/sync/compare', async (_req, res) => {
+  try {
+    // 1. Local Count
+    const localRes = await get(db, 'SELECT COUNT(*) as cnt FROM laws')
+    const localCount = localRes?.cnt || 0
+
+    // 2. Remote Count (Public API)
+    // Assuming production URL is https://regulativa.ba (or from ENV)
+    const remoteUrl = process.env.REMOTE_API_URL || 'https://regulativa.ba'
+    const remoteApi = `${remoteUrl}/api/laws?limit=1&format=paged`
+
+    let remoteCount = 0
+    let remoteStatus = 'unknown'
+
+    try {
+      const resp = await fetch(remoteApi)
+      if (resp.ok) {
+        const data = await resp.json() as any
+        remoteCount = data.total || 0
+        remoteStatus = 'online'
+      } else {
+        remoteStatus = `error_${resp.status}`
+      }
+    } catch (e) {
+      remoteStatus = 'unreachable'
+    }
+
+    res.json({
+      local_count: localCount,
+      remote_count: remoteCount,
+      diff: remoteCount - localCount,
+      status: remoteStatus
+    })
+  } catch (e) {
+    res.status(500).json({ error: String(e) })
+  }
+})
+
+app.post('/api/admin/actions/sync', async (_req, res) => {
+  try {
+    console.log('Admin triggered sync from prod...')
+    const script = path.resolve(process.cwd(), 'scripts', 'sync_prod_to_local.ts')
+
+    // Spawn detached process
+    const child = spawn('node', ['--import', 'tsx', script], {
+      detached: true,
+      stdio: 'ignore'
+    })
+    child.unref()
+
+    res.json({ ok: true, message: 'Sync started in background' })
+  } catch (e) {
+    res.status(500).json({ error: String(e) })
+  }
+})
+
+// ============================================
+// Law Groups API (Related Laws Functionality)
+// ============================================
+
+// List all law groups
+app.get('/api/law-groups', async (req, res) => {
+  try {
+    const jurisdiction = req.query.jurisdiction ? String(req.query.jurisdiction) : null
+    const where = jurisdiction ? 'WHERE jurisdiction = ?' : ''
+    const params = jurisdiction ? [jurisdiction] : []
+
+    const groups = await all(
+      db,
+      `SELECT g.id, g.jurisdiction, g.name, g.base_law_id, g.created_at,
+              (SELECT COUNT(*) FROM laws WHERE group_id = g.id) as law_count
+       FROM law_groups g ${where}
+       ORDER BY g.name ASC`,
+      params
+    )
+    res.json(groups)
+  } catch (e) {
+    res.status(500).json({ error: String(e) })
+  }
+})
+
+// Get single law group with its laws
+app.get('/api/law-groups/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id)
+    const group = await get(db, 'SELECT * FROM law_groups WHERE id = ?', [id])
+    if (!group) return res.status(404).json({ error: 'Not found' })
+
+    const laws = await all(
+      db,
+      `SELECT id, title, gazette_key, gazette_date 
+       FROM laws 
+       WHERE group_id = ? 
+       ORDER BY gazette_date ASC, id ASC`,
+      [id]
+    )
+    res.json({ ...group, laws })
+  } catch (e) {
+    res.status(500).json({ error: String(e) })
+  }
+})
+
+// Admin: Suggest law group
+app.get('/api/admin/law-groups/suggest', async (req, res) => {
+  try {
+    const title = req.query.title ? String(req.query.title) : ''
+    const jurisdiction = req.query.jurisdiction ? String(req.query.jurisdiction) : 'RS'
+    
+    if (!title || title.length < 3) return res.json([])
+
+    const suggestions = await groupingService.suggestGroup(db, title, jurisdiction)
+    res.json(suggestions)
+  } catch (e) {
+    res.status(500).json({ error: String(e) })
+  }
+})
+
+// Admin: Create a new law group
+app.post('/api/admin/law-groups', async (req, res) => {
+  try {
+    const { jurisdiction, name, base_law_id, law_ids } = req.body
+    if (!jurisdiction || !name) {
+      return res.status(400).json({ error: 'jurisdiction and name are required' })
+    }
+
+    await run(
+      db,
+      `INSERT INTO law_groups (jurisdiction, name, base_law_id) VALUES (?, ?, ?)`,
+      [jurisdiction, name, base_law_id || null]
+    )
+
+    const group = await get(db, 'SELECT * FROM law_groups ORDER BY id DESC LIMIT 1')
+    if (!group) throw new Error('Failed to create group')
+
+    // Assign laws to this group if provided
+    if (Array.isArray(law_ids) && law_ids.length > 0) {
+      for (const lawId of law_ids) {
+        await run(db, 'UPDATE laws SET group_id = ? WHERE id = ?', [group.id, lawId])
+      }
+    }
+
+    res.json({ ok: true, group })
+  } catch (e) {
+    res.status(500).json({ error: String(e) })
+  }
+})
+
+// Admin: Assign a law to a group
+app.post('/api/admin/laws/:id/assign-group', async (req, res) => {
+  try {
+    const lawId = Number(req.params.id)
+    const { group_id } = req.body
+
+    const law = await get(db, 'SELECT id FROM laws WHERE id = ?', [lawId])
+    if (!law) return res.status(404).json({ error: 'Law not found' })
+
+    if (group_id) {
+      const group = await get(db, 'SELECT id FROM law_groups WHERE id = ?', [group_id])
+      if (!group) return res.status(404).json({ error: 'Group not found' })
+    }
+
+    await run(db, 'UPDATE laws SET group_id = ? WHERE id = ?', [group_id || null, lawId])
+    res.json({ ok: true })
+  } catch (e) {
+    res.status(500).json({ error: String(e) })
+  }
+})
+
+// Test route
+app.get('/api/ping', (req, res) => res.send('pong'))
+
+// Admin: Search law groups (simple search by name)
+app.get('/api/admin/law-groups/search', async (req, res) => {
+  try {
+    const q = String(req.query.q || '').trim()
+    const jurisdiction = req.query.jurisdiction ? String(req.query.jurisdiction) : null
+    
+    if (!q) return res.json([])
+    
+    const params: any[] = [`%${q}%`]
+    let sql = 'SELECT id, name, jurisdiction FROM law_groups WHERE name LIKE ?'
+    
+    if (jurisdiction) {
+      sql += ' AND jurisdiction = ?'
+      params.push(jurisdiction)
+    }
+    
+    sql += ' ORDER BY name ASC LIMIT 20'
+    
+    const groups = await all(db, sql, params)
+    
+    // Add law_count and recent laws to each
+    for (const g of groups) {
+      const c = await get(db, 'SELECT COUNT(*) as cnt FROM laws WHERE group_id = ?', [g.id])
+      g.law_count = c?.cnt || 0
+      
+      // Fetch laws with metadata
+      g.laws = await all(
+        db, 
+        'SELECT id, title, gazette_key, gazette_date FROM laws WHERE group_id = ? ORDER BY gazette_date DESC, id DESC', 
+        [g.id]
+      )
+    }
+    
+    // Search ungrouped laws
+    let lawSql = 'SELECT id, title, jurisdiction FROM laws WHERE group_id IS NULL AND title LIKE ?'
+    const lawParams: any[] = [`%${q}%`]
+    
+    if (jurisdiction) {
+      lawSql += ' AND jurisdiction = ?'
+      lawParams.push(jurisdiction)
+    }
+    
+    lawSql += ' LIMIT 10'
+    const laws = await all(db, lawSql, lawParams)
+
+    // Merge results
+    const results: any[] = groups.map(g => ({ ...g, type: 'group' }))
+    
+    for (const l of laws) {
+        results.push({
+            id: l.id,
+            name: l.title,
+            jurisdiction: l.jurisdiction,
+            type: 'law',
+            law_count: 1,
+            laws: [{ id: l.id, title: l.title }]
+        })
+    }
+    
+    res.json(results)
+  } catch (e) {
+    res.status(500).json({ error: String(e) })
+  }
+})
+
+// Admin: Get a law group details
+app.get('/api/admin/law-groups/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id)
+    const group = await get(db, 'SELECT * FROM law_groups WHERE id = ?', [id])
+    if (!group) return res.status(404).json({ error: 'Group not found' })
+    
+    // Get count of laws
+    const countRes = await get(db, 'SELECT COUNT(*) as cnt FROM laws WHERE group_id = ?', [id])
+    group.law_count = countRes?.cnt || 0
+    
+    // Fetch laws with metadata
+    group.laws = await all(
+      db, 
+      'SELECT id, title, gazette_key, gazette_date FROM laws WHERE group_id = ? ORDER BY gazette_date DESC, id DESC', 
+      [id]
+    )
+    
+    res.json(group)
+  } catch (e) {
+    res.status(500).json({ error: String(e) })
+  }
+})
+
+// Admin: Delete a law group (unlinks laws, does not delete them)
+app.delete('/api/admin/law-groups/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id)
+    const group = await get(db, 'SELECT id FROM law_groups WHERE id = ?', [id])
+    if (!group) return res.status(404).json({ error: 'Group not found' })
+
+    // Unlink all laws from this group
+    await run(db, 'UPDATE laws SET group_id = NULL WHERE group_id = ?', [id])
+    // Delete the group
+    await run(db, 'DELETE FROM law_groups WHERE id = ?', [id])
+
+    res.json({ ok: true })
+  } catch (e) {
+    res.status(500).json({ error: String(e) })
+  }
+})
+
+// --- SCRAPER ROUTES ---
+
+// Get all scraper configs
+app.get('/api/admin/scraper/configs', async (_req, res) => {
+  try {
+    const configs = await all(db, 'SELECT * FROM scraper_configs')
+    res.json(configs)
+  } catch (e) {
+    res.status(500).json({ error: String(e) })
+  }
+})
+
+// Update scraper config
+app.put('/api/admin/scraper/configs/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id)
+    const { url } = req.body
+    if (!url) return res.status(400).json({ error: 'URL is required' })
+    
+    await run(db, 'UPDATE scraper_configs SET url = ?, updated_at = datetime("now") WHERE id = ?', [url, id])
+    res.json({ ok: true })
+  } catch (e) {
+    res.status(500).json({ error: String(e) })
+  }
+})
+
+// Check for new laws
+app.post('/api/admin/scraper/check', async (req, res) => {
+  try {
+    const { jurisdiction } = req.body
+    if (!jurisdiction) return res.status(400).json({ error: 'Jurisdiction required' })
+
+    const config = await get(db, 'SELECT * FROM scraper_configs WHERE jurisdiction = ?', [jurisdiction])
+    if (!config) return res.status(404).json({ error: 'Config not found for ' + jurisdiction })
+
+    let laws: any[] = []
+    if (jurisdiction === 'RS') {
+       laws = await scraperService.checkRS(db, config.url)
+    } else {
+       return res.status(400).json({ error: 'Scraper not implemented for ' + jurisdiction })
+    }
+    
+    // Update last check
+    await run(db, 'UPDATE scraper_configs SET last_check = datetime("now") WHERE id = ?', [config.id])
+
+    res.json({ laws })
+  } catch (e) {
+    res.status(500).json({ error: String(e) })
+  }
+})
+
+// Import selected laws
+app.post('/api/admin/scraper/import', async (req, res) => {
+  try {
+    const { laws } = req.body // Array of ScrapedLaw
+    if (!Array.isArray(laws) || laws.length === 0) {
+      return res.status(400).json({ error: 'No laws provided' })
+    }
+
+    const result = await scraperService.importLaws(db, laws)
+    
+    // Update MeiliSearch index with new laws
+    if (meili && result.importedIds.length > 0) {
+      try {
+        const index = meili.index('laws')
+        const placeholders = result.importedIds.map(() => '?').join(',')
+        const newLaws = await all(db, `SELECT * FROM laws WHERE id IN (${placeholders})`, result.importedIds)
+        
+        const documents = newLaws.map((law: any) => ({
+          id: law.id,
+          title: law.title,
+          title_normalized: law.title_normalized,
+          text: law.text_content, // Ensure this column matches
+          jurisdiction: law.jurisdiction,
+          gazette_key: law.gazette_key,
+          views_count: law.views_count || 0,
+          created_at: Math.floor(new Date(law.created_at).getTime() / 1000)
+        }))
+        
+        await index.addDocuments(documents)
+        console.log(`Added ${documents.length} new laws to MeiliSearch index`)
+      } catch (e) {
+        console.error('Failed to update MeiliSearch index after import:', e)
+      }
+    }
+
+    res.json(result)
+  } catch (e) {
     res.status(500).json({ error: String(e) })
   }
 })

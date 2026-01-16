@@ -10,8 +10,8 @@ services:
     ports:
       - "5000:5000"
     volumes:
-      - api_data:/app/data
-      - api_uploads:/app/uploads
+      - ./apps/api/data:/app/data
+      - ./apps/api/uploads:/app/uploads
     depends_on:
       - meilisearch
 
